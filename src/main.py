@@ -40,8 +40,8 @@ from src.soul import ProfileManager, SoulManager
 # 流式输出时单行显示的字符上限（避免刷屏）
 MAX_PREVIEW_CHARS = 200
 
-EXIT_COMMANDS = {":quit", ":q", ":exit", "exit", "quit"}
-RESET_COMMANDS = {":reset", ":clear"}
+EXIT_COMMANDS = {"/quit", "/q", "/exit", "exit", "quit"}
+RESET_COMMANDS = {"/reset", "/clear"}
 
 
 # ── 工具函数 ───────────────────────────────────────────────────────────────
@@ -137,7 +137,7 @@ async def _invoke_stream(agent: Any, user_input: str, config: dict) -> None:
 # ── 启动会话选择器 ─────────────────────────────────────────────────────────
 
 
-def _pick_session(registry: SessionRegistry) -> str:
+def _pick_session(registry: SessionRegistry, memory_manager: MemoryManager | None = None) -> str:
     """REPL 启动时让用户在历史会话中选择 / 新建 / 删除。"""
     sessions = registry.list()
     if not sessions:
@@ -149,7 +149,12 @@ def _pick_session(registry: SessionRegistry) -> str:
     print(f"检测到 {len(sessions)} 个历史会话：")
     for i, s in enumerate(sessions, 1):
         short = s["thread_id"][:8]
-        turns = s.get("turn_count", 0)
+        # 优先从 agent state 读取真实轮数，其次用 registry 记录
+        if memory_manager is not None:
+            stats = memory_manager.get_stats(s["thread_id"])
+            turns = stats.messages // 2
+        else:
+            turns = s.get("turn_count", 0)
         last = s.get("last_active", "?")
         print(f"  [{i}] {short}... | {turns:>3} 轮 | 最后活跃 {last}")
     print("=" * 60)
@@ -178,14 +183,18 @@ def _pick_session(registry: SessionRegistry) -> str:
     return tid
 
 
-def _format_session_picker(registry: SessionRegistry) -> str:
+def _format_session_picker(registry: SessionRegistry, memory_manager: MemoryManager | None = None) -> str:
     sessions = registry.list()
     if not sessions:
         return "(暂无历史会话)"
     lines = ["当前历史会话："]
     for i, s in enumerate(sessions, 1):
         short = s["thread_id"][:8]
-        turns = s.get("turn_count", 0)
+        if memory_manager is not None:
+            stats = memory_manager.get_stats(s["thread_id"])
+            turns = stats.messages // 2
+        else:
+            turns = s.get("turn_count", 0)
         last = s.get("last_active", "?")
         lines.append(f"  [{i}] {short}... | {turns:>3} 轮 | 最后活跃 {last}")
     return "\n".join(lines)
@@ -299,7 +308,7 @@ async def _repl_loop_async(
             switch_thread(new_tid)
             continue
         if low == ":sessions":
-            print(_format_session_picker(registry))
+            print(_format_session_picker(registry, memory_manager))
             continue
         if low.startswith(":switch "):
             try:
@@ -410,7 +419,7 @@ async def run_repl() -> int:
     async with AsyncSqliteSaver.from_conn_string(settings.db_path) as checkpointer:
         agent = build_agent(llm, checkpointer=checkpointer)
         memory_manager = MemoryManager(agent, llm, settings)
-        thread_id = _pick_session(registry)
+        thread_id = _pick_session(registry, memory_manager)
         config: dict = {"configurable": {"thread_id": thread_id}}
         await _repl_loop_async(agent, memory_manager, registry, thread_id, config)
     return 0
