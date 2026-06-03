@@ -23,8 +23,17 @@ from langgraph.graph.message import add_messages
 from typing_extensions import NotRequired, TypedDict
 
 from src.tools import calculator, current_time, weather, web_search
+from src.soul import SoulManager, ProfileManager
 
 SYSTEM_PROMPT = """你是一个有用的中文助手。可以调用工具来回答问题。
+
+
+def _get_soul_manager() -> "SoulManager":
+    return SoulManager()
+
+
+def _get_profile_manager() -> "ProfileManager":
+    return ProfileManager()
 
 行为准则：
 1. 拿到用户问题后先想清楚需不需要工具、需要哪个。
@@ -96,6 +105,7 @@ def build_agent(
     llm: BaseChatModel,
     *,
     checkpointer: MemorySaver | None = None,
+    profile: dict | None = None,
 ):
     """构造一个配置好工具的 agent graph。
 
@@ -105,13 +115,30 @@ def build_agent(
     当传入 ``checkpointer`` 时，agent 会把每轮状态持久化到该 checkpointer，
     调用方需在 ``config`` 里传 ``{"configurable": {"thread_id": <id>}}`` 来区分会话。
     不传 checkpointer 则保持"无状态"行为，向后兼容。
+
+    Args:
+        llm: Language model instance.
+        checkpointer: Optional memory checkpointer for persistence.
+        profile: Optional profile dict. If not provided, loads from ProfileManager.
     """
+    # Load soul and prepend description to system prompt if non-empty
+    soul = _get_soul_manager().load()
+    soul_description = soul.get("description", "")
+    if soul_description:
+        system_prompt = f"你是一个<soul.description>的助手。\n\n{SYSTEM_PROMPT}"
+    else:
+        system_prompt = SYSTEM_PROMPT
+
+    # Load profile if not provided
+    if profile is None:
+        profile = _get_profile_manager().load()
+
     return create_agent(
         model=llm,
         tools=[calculator, current_time, weather, web_search],
-        system_prompt=SYSTEM_PROMPT,
+        system_prompt=system_prompt,
         state_schema=AgentState,
-        middleware=[SummaryMiddleware()],
+        middleware=[SummaryMiddleware(), ProfileMiddleware(profile=profile)],
         name="single-agent",
         checkpointer=checkpointer,
     )
