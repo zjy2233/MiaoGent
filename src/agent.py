@@ -27,14 +27,6 @@ from src.soul import SoulManager, ProfileManager
 
 SYSTEM_PROMPT = """你是一个有用的中文助手。可以调用工具来回答问题。
 
-
-def _get_soul_manager() -> "SoulManager":
-    return SoulManager()
-
-
-def _get_profile_manager() -> "ProfileManager":
-    return ProfileManager()
-
 行为准则：
 1. 拿到用户问题后先想清楚需不需要工具、需要哪个。
 2. **所有数学计算必须调用 calculator 工具，不要心算。**
@@ -42,6 +34,14 @@ def _get_profile_manager() -> "ProfileManager":
 4. 工具返回错误时，**基于错误信息调整输入再试**，或明确告诉用户失败原因。
 5. 给出最终答案时用简洁的中文。
 6. 用户问"现在几点 / 当前时间"时，**必须调用 current_time 工具**，不要凭印象回答。"""
+
+
+def _get_soul_manager() -> "SoulManager":
+    return SoulManager()
+
+
+def _get_profile_manager() -> "ProfileManager":
+    return ProfileManager()
 
 
 class AgentState(TypedDict):
