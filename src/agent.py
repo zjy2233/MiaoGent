@@ -125,7 +125,7 @@ def build_agent(
     soul = _get_soul_manager().load()
     soul_description = soul.get("description", "")
     if soul_description:
-        system_prompt = f"你是一个<soul.description>的助手。\n\n{SYSTEM_PROMPT}"
+        system_prompt = f"你是一个{soul_description}的助手。\n\n{SYSTEM_PROMPT}"
     else:
         system_prompt = SYSTEM_PROMPT
 
