@@ -5,12 +5,14 @@
     python -m src.main "北京今天天气怎么样？再算下 25*4+10"   # 一问一答
 
 REPL 内置命令：
-    :quit / :q / :exit / exit / quit  退出
-    :reset / :clear                   换一个新的 thread_id（旧的留在 registry）
-    :sessions                         重新显示历史会话列表
-    :switch <编号>                     切到指定历史会话
-    :delete <编号>                     删除指定会话（同时清 SQLite 中的 checkpoint）
-    :stats                            显示当前会话的 messages/chars/summary 长度
+    /quit / /q / /exit / exit / quit  退出
+    /reset / /clear                   换一个新的 thread_id（旧的留在 registry）
+    /sessions                         重新显示历史会话列表
+    /switch <编号>                     切到指定历史会话
+    /delete <编号>                     删除指定会话（同时清 SQLite 中的 checkpoint）
+    /stats                            显示当前会话的 messages/chars/summary 长度
+    /soul [文本]                      查看/设置 agent 风格
+    /profile [key [value]]            查看/设置用户画像
 
 持久化策略：
 - REPL：``history.db``（SqliteSaver）+ ``.sessions.json``（注册表），跨进程保留
@@ -36,12 +38,10 @@ from src.llm import build_llm
 from src.memory import MemoryManager
 from src.sessions import SessionRegistry
 from src.soul import ProfileManager, SoulManager
+from src.tools.dangerous import ConfirmationError
 
 # 流式输出时单行显示的字符上限（避免刷屏）
 MAX_PREVIEW_CHARS = 200
-
-EXIT_COMMANDS = {"/quit", "/q", "/exit", "exit", "quit"}
-RESET_COMMANDS = {"/reset", "/clear"}
 
 
 # ── 工具函数 ───────────────────────────────────────────────────────────────
@@ -137,7 +137,7 @@ async def _invoke_stream(agent: Any, user_input: str, config: dict) -> None:
 # ── 启动会话选择器 ─────────────────────────────────────────────────────────
 
 
-def _pick_session(registry: SessionRegistry, memory_manager: MemoryManager | None = None) -> str:
+def _pick_session(registry: SessionRegistry) -> str:
     """REPL 启动时让用户在历史会话中选择 / 新建 / 删除。"""
     sessions = registry.list()
     if not sessions:
@@ -149,12 +149,7 @@ def _pick_session(registry: SessionRegistry, memory_manager: MemoryManager | Non
     print(f"检测到 {len(sessions)} 个历史会话：")
     for i, s in enumerate(sessions, 1):
         short = s["thread_id"][:8]
-        # 优先从 agent state 读取真实轮数，其次用 registry 记录
-        if memory_manager is not None:
-            stats = memory_manager.get_stats(s["thread_id"])
-            turns = stats.messages // 2
-        else:
-            turns = s.get("turn_count", 0)
+        turns = s.get("turn_count", 0)
         last = s.get("last_active", "?")
         print(f"  [{i}] {short}... | {turns:>3} 轮 | 最后活跃 {last}")
     print("=" * 60)
@@ -183,18 +178,14 @@ def _pick_session(registry: SessionRegistry, memory_manager: MemoryManager | Non
     return tid
 
 
-def _format_session_picker(registry: SessionRegistry, memory_manager: MemoryManager | None = None) -> str:
+def _format_session_picker(registry: SessionRegistry) -> str:
     sessions = registry.list()
     if not sessions:
         return "(暂无历史会话)"
     lines = ["当前历史会话："]
     for i, s in enumerate(sessions, 1):
         short = s["thread_id"][:8]
-        if memory_manager is not None:
-            stats = memory_manager.get_stats(s["thread_id"])
-            turns = stats.messages // 2
-        else:
-            turns = s.get("turn_count", 0)
+        turns = s.get("turn_count", 0)
         last = s.get("last_active", "?")
         lines.append(f"  [{i}] {short}... | {turns:>3} 轮 | 最后活跃 {last}")
     return "\n".join(lines)
@@ -204,10 +195,10 @@ def _format_session_picker(registry: SessionRegistry, memory_manager: MemoryMana
 
 
 def _parse_soul_command(argv: list[str]) -> tuple[str, str | None]:
-    """Parse :soul command arguments.
+    """Parse /soul command arguments.
 
     Args:
-        argv: Split command arguments (e.g. [":soul", "文本"] or [":soul"])
+        argv: Split command arguments (e.g. ["/soul", "文本"] or ["/soul"])
 
     Returns:
         Tuple of (action, value) where action is "view" or "set".
@@ -218,7 +209,7 @@ def _parse_soul_command(argv: list[str]) -> tuple[str, str | None]:
 
 
 def _parse_profile_command(argv: list[str]) -> tuple[str, str | None, str | None]:
-    """Parse :profile command arguments.
+    """Parse /profile command arguments.
 
     Args:
         argv: Split command arguments.
@@ -235,6 +226,145 @@ def _parse_profile_command(argv: list[str]) -> tuple[str, str | None, str | None
     if len(argv) == 3 and argv[1] == "unset":
         return ("unset", argv[2], None)
     return ("view", None, None)  # fallback
+
+
+# 命令调度表：prefix -> (exact_match, handler_fn)
+# handler_fn 接收 (argv, context_dict) 返回 True 表示已处理（继续下一轮）
+_builtin_commands: list[tuple[str, bool, callable]] = []
+
+
+def _register_command(
+    prefix: str, exact: bool, handler: callable
+) -> None:
+    _builtin_commands.append((prefix, exact, handler))
+
+
+def _dispatch(low: str, argv: list[str], ctx: dict) -> bool:
+    """Dispatch user input to matching command handler.
+
+    Returns True if command was handled (caller should continue loop).
+    """
+    for prefix, exact, handler in _builtin_commands:
+        if exact:
+            if low == prefix:
+                return handler(argv, ctx)
+        else:
+            if low.startswith(prefix):
+                return handler(argv, ctx)
+    return False
+
+
+# ── REPL 内置命令处理器 ─────────────────────────────────────────────────────
+
+
+def _cmd_quit(argv: list[str], ctx: dict) -> bool:
+    ctx["memory_manager"].discover_and_update_profile(ctx["thread_id"])
+    ctx["memory_manager"].compress_if_needed(ctx["thread_id"])
+    ctx["registry"].update(ctx["thread_id"])
+    print("bye.")
+    ctx["running"] = False
+    return True
+
+
+def _cmd_reset(argv: list[str], ctx: dict) -> bool:
+    new_tid = ctx["registry"].new_thread_id()
+    ctx["registry"].add(new_tid)
+    ctx["switch_thread"](new_tid)
+    return True
+
+
+def _cmd_sessions(argv: list[str], ctx: dict) -> bool:
+    print(_format_session_picker(ctx["registry"]))
+    return True
+
+
+def _cmd_switch(argv: list[str], ctx: dict) -> bool:
+    if len(argv) < 2:
+        print("用法：/switch <编号>")
+        return True
+    try:
+        idx = int(argv[1]) - 1
+        sessions = ctx["registry"].list()
+        if 0 <= idx < len(sessions):
+            ctx["switch_thread"](sessions[idx]["thread_id"])
+        else:
+            print("无效编号")
+    except (ValueError, IndexError):
+        print("用法：/switch <编号>")
+    return True
+
+
+def _cmd_delete(argv: list[str], ctx: dict) -> bool:
+    if len(argv) < 2:
+        print("用法：/delete <编号>")
+        return True
+    try:
+        idx = int(argv[1]) - 1
+        sessions = ctx["registry"].list()
+        if 0 <= idx < len(sessions):
+            target = sessions[idx]["thread_id"]
+            ctx["registry"].remove(target)
+            if target == ctx["thread_id"]:
+                ctx["switch_thread"](ctx["registry"].new_thread_id())
+                ctx["registry"].add(ctx["thread_id"])
+            print(f"已删除会话 {target[:8]}...")
+        else:
+            print("无效编号")
+    except (ValueError, IndexError):
+        print("用法：/delete <编号>")
+    return True
+
+
+def _cmd_stats(argv: list[str], ctx: dict) -> bool:
+    _print_stats(ctx["memory_manager"], ctx["thread_id"])
+    return True
+
+
+def _cmd_soul(argv: list[str], ctx: dict) -> bool:
+    action, value = _parse_soul_command(argv)
+    manager_soul = SoulManager()
+    if action == "view":
+        soul = manager_soul.load()
+        print(f"当前风格：{soul.get('description', '')}")
+    elif action == "set" and value:
+        manager_soul.save({"version": 1, "description": value})
+        print(f"风格已更新：{value}")
+    return True
+
+
+def _cmd_profile(argv: list[str], ctx: dict) -> bool:
+    action, key, value = _parse_profile_command(argv)
+    manager_profile = ProfileManager()
+    if action == "view":
+        profile = manager_profile.load()
+        print("当前画像：")
+        for k, v in profile.items():
+            if k != "version":
+                print(f"  {k}: {v}")
+    elif action == "get" and key:
+        profile = manager_profile.load()
+        print(f"{key}: {profile.get(key, '(未设置)')}")
+    elif action == "set" and key and value:
+        manager_profile.set(key, value, source="explicit")
+        print(f"{key} 已设置为 {value}。")
+    elif action == "unset" and key:
+        manager_profile.unset(key)
+        print(f"{key} 已删除。")
+    return True
+
+
+# 注册所有内置命令
+_register_command("/quit", True, _cmd_quit)
+_register_command("/q", True, _cmd_quit)
+_register_command("/exit", True, _cmd_quit)
+_register_command("/reset", True, _cmd_reset)
+_register_command("/clear", True, _cmd_reset)
+_register_command("/sessions", True, _cmd_sessions)
+_register_command("/switch", False, _cmd_switch)
+_register_command("/delete", False, _cmd_delete)
+_register_command("/stats", True, _cmd_stats)
+_register_command("/soul", False, _cmd_soul)
+_register_command("/profile", False, _cmd_profile)
 
 
 # ── REPL 主体 ─────────────────────────────────────────────────────────────
@@ -279,7 +409,7 @@ async def _repl_loop_async(
 
     print("=" * 60)
     print("单 Agent 已就绪。可用工具：calculator, current_time, weather, web_search")
-    print("命令：:quit 退出 · :reset 新建 · :sessions 列表 · :switch n 切换 · :delete n 删除 · :stats 状态")
+    print("命令：/quit 退出 · /reset 新建 · /sessions 列表 · /switch n 切换 · /delete n 删除 · /stats 状态 · /soul [文本] · /profile [key [value]]")
     _print_stats(memory_manager, thread_id)
     print("=" * 60)
 
@@ -294,84 +424,49 @@ async def _repl_loop_async(
             return
         if not user_input:
             continue
-        low = user_input.lower()
 
-        if low in EXIT_COMMANDS:
-            memory_manager.compress_if_needed(thread_id)
-            registry.update(thread_id)
-            print("bye.")
-            return
-        if low in RESET_COMMANDS:
-            # 旧的留在 registry，新开一个
-            new_tid = registry.new_thread_id()
-            registry.add(new_tid)
-            switch_thread(new_tid)
-            continue
-        if low == ":sessions":
-            print(_format_session_picker(registry, memory_manager))
-            continue
-        if low.startswith(":switch "):
-            try:
-                idx = int(low.split()[1]) - 1
-                sessions = registry.list()
-                if 0 <= idx < len(sessions):
-                    switch_thread(sessions[idx]["thread_id"])
-                else:
-                    print("无效编号")
-            except (ValueError, IndexError):
-                print("用法：:switch <编号>")
-            continue
-        if low.startswith(":delete "):
-            try:
-                idx = int(low.split()[1]) - 1
-                sessions = registry.list()
-                if 0 <= idx < len(sessions):
-                    target = sessions[idx]["thread_id"]
-                    registry.remove(target)
-                    if target == thread_id:
-                        switch_thread(registry.new_thread_id())
-                        registry.add(thread_id)
-                    print(f"已删除会话 {target[:8]}...")
-                else:
-                    print("无效编号")
-            except (ValueError, IndexError):
-                print("用法：:delete <编号>")
-            continue
-        if low == ":stats":
-            _print_stats(memory_manager, thread_id)
-            continue
-        if low.startswith(":soul"):
-            action, value = _parse_soul_command(low.split())
-            manager_soul = SoulManager()
-            if action == "view":
-                soul = manager_soul.load()
-                print(f"当前风格：{soul.get('description', '')}")
-            elif action == "set" and value:
-                manager_soul.save({"version": 1, "description": value})
-                print(f"风格已更新：{value}")
-            continue
-        if low.startswith(":profile"):
-            action, key, value = _parse_profile_command(low.split())
-            manager_profile = ProfileManager()
-            if action == "view":
-                profile = manager_profile.load()
-                print("当前画像：")
-                for k, v in profile.items():
-                    if k != "version":
-                        print(f"  {k}: {v}")
-            elif action == "get" and key:
-                profile = manager_profile.load()
-                print(f"{key}: {profile.get(key, '(未设置)')}")
-            elif action == "set" and key and value:
-                manager_profile.set(key, value, source="explicit")
-                print(f"{key} 已设置为 {value}。")
-            elif action == "unset" and key:
-                manager_profile.unset(key)
-                print(f"{key} 已删除。")
+        argv = user_input.lower().split()
+        low = argv[0]
+
+        # 构建命令上下文
+        ctx = {
+            "memory_manager": memory_manager,
+            "registry": registry,
+            "thread_id": thread_id,
+            "switch_thread": switch_thread,
+            "running": True,
+        }
+
+        # 分发命令
+        if _dispatch(low, argv, ctx):
+            if not ctx.get("running", True):
+                return
             continue
 
         try:
             await _invoke_stream(agent, user_input, config)
+        except ConfirmationError as exc:
+            if exc.danger_level == "high_risk":
+                print(f"\n!!! 高危命令已被拦截：{exc.command}\n   原因：{exc.reason}\n")
+                continue
+            # confirm 级别：打印确认提示
+            print(f"\n⚠️  此操作需要确认：{exc.command}")
+            print(f"   原因：{exc.reason}")
+            raw = input("   确认执行？[y/N] ").strip()
+            if raw.lower() == "y":
+                # 重新执行（裸执行，不走 astream_events，否则再次抛异常）
+                try:
+                    result = await agent.ainvoke(
+                        {"messages": [{"role": "user", "content": user_input}]},
+                        config=config,
+                    )
+                    answer = _extract_final_answer(result)
+                    print(f"\n>>> {answer}\n")
+                except Exception as inner_exc:
+                    print(f"\n!!! 执行出错：{type(inner_exc).__name__}: {inner_exc}\n")
+            else:
+                print("已取消。")
+            continue
         except Exception as exc:  # noqa: BLE001 — REPL 要吞所有错才能继续
             print(f"\n!!! 运行出错：{type(exc).__name__}: {exc}\n")
             continue
@@ -395,11 +490,14 @@ async def _run_cli_once(llm: Any, settings: Settings, prompt: str) -> int:
     tmp.close()
     try:
         async with AsyncSqliteSaver.from_conn_string(tmp_path) as checkpointer:
-            agent = build_agent(llm, checkpointer=checkpointer)
-            memory_manager = MemoryManager(agent, llm, settings)
+            bundle = build_agent(llm, checkpointer=checkpointer)
+            memory_manager = MemoryManager(
+                bundle.agent, llm, settings,
+                profile_middleware=bundle.profile_middleware,
+            )
             thread_id = str(uuid.uuid4())
             config = {"configurable": {"thread_id": thread_id}}
-            result = await _invoke_once(agent, prompt, config)
+            result = await _invoke_once(bundle.agent, prompt, config)
             print(f"\n>>> {_extract_final_answer(result)}\n")
     finally:
         try:
@@ -417,11 +515,14 @@ async def run_repl() -> int:
     llm = build_llm(settings)
     registry = SessionRegistry()
     async with AsyncSqliteSaver.from_conn_string(settings.db_path) as checkpointer:
-        agent = build_agent(llm, checkpointer=checkpointer)
-        memory_manager = MemoryManager(agent, llm, settings)
-        thread_id = _pick_session(registry, memory_manager)
+        bundle = build_agent(llm, checkpointer=checkpointer)
+        memory_manager = MemoryManager(
+            bundle.agent, llm, settings,
+            profile_middleware=bundle.profile_middleware,
+        )
+        thread_id = _pick_session(registry)
         config: dict = {"configurable": {"thread_id": thread_id}}
-        await _repl_loop_async(agent, memory_manager, registry, thread_id, config)
+        await _repl_loop_async(bundle.agent, memory_manager, registry, thread_id, config)
     return 0
 
 
