@@ -472,11 +472,12 @@ async def _repl_loop_async(
                     print(f"     - {alt}")
             raw = input("   确认执行？[y/N] ").strip()
             if raw.lower() == "y":
-                # 重新执行（裸执行，不走 astream_events，否则再次抛异常）
+                # 换新的 thread_id 重试（避免旧 checkpoint 里残留的 tool_calls 消息污染状态）
+                new_config = {"configurable": {"thread_id": registry.new_thread_id()}}
                 try:
                     result = await agent.ainvoke(
                         {"messages": [{"role": "user", "content": user_input}]},
-                        config=config,
+                        config=new_config,
                     )
                     answer = _extract_final_answer(result)
                     print(f"\n>>> {answer}\n")
