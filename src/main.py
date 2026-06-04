@@ -54,12 +54,17 @@ def _extract_final_answer(state: dict) -> str:
         return "(agent 没有返回消息)"
     content = messages[-1].content
     if isinstance(content, str):
-        return content or "(空回答)"
+        return _clean_output(content) or "(空回答)"
     if isinstance(content, list):
         return "".join(
             block.get("text", "") for block in content if isinstance(block, dict)
         ) or "(空回答)"
     return str(content)
+
+
+def _clean_output(text: str) -> str:
+    """移除输出中的非法 Unicode 代理字符。"""
+    return text.encode("utf-8", errors="replace").decode("utf-8", errors="replace")
 
 
 async def _invoke_once(agent: Any, prompt: str, config: dict) -> dict:
@@ -77,17 +82,17 @@ def _chunk_to_text(chunk: Any) -> str:
     if chunk is None:
         return ""
     if isinstance(chunk, str):
-        return chunk
+        return _clean_output(chunk)
     if isinstance(chunk, dict):
         c = chunk.get("content", "")
         if isinstance(c, str):
-            return c
+            return _clean_output(c)
         if isinstance(c, list):
             return "".join(b.get("text", "") for b in c if isinstance(b, dict))
         return ""
     content = getattr(chunk, "content", "")
     if isinstance(content, str):
-        return content
+        return _clean_output(content)
     if isinstance(content, list):
         return "".join(b.get("text", "") for b in content if isinstance(b, dict))
     return ""
@@ -153,7 +158,8 @@ def _pick_session(registry: SessionRegistry) -> str:
         last = s.get("last_active", "?")
         print(f"  [{i}] {short}... | {turns:>3} 轮 | 最后活跃 {last}")
     print("=" * 60)
-    raw = input("选择编号继续 / n 新建 / d <编号> 删除 [n]: ").strip()
+    print('命令：输入编号继续 · 回车新建 · d 编号删除')
+    raw = input('> ').strip()
 
     if raw.lower().startswith("d "):
         try:
@@ -239,7 +245,7 @@ def _register_command(
     _builtin_commands.append((prefix, exact, handler))
 
 
-def _dispatch(low: str, argv: list[str], ctx: dict) -> bool:
+async def _dispatch(low: str, argv: list[str], ctx: dict) -> bool:
     """Dispatch user input to matching command handler.
 
     Returns True if command was handled (caller should continue loop).
@@ -247,38 +253,40 @@ def _dispatch(low: str, argv: list[str], ctx: dict) -> bool:
     for prefix, exact, handler in _builtin_commands:
         if exact:
             if low == prefix:
-                return handler(argv, ctx)
+                return await handler(argv, ctx)
         else:
             if low.startswith(prefix):
-                return handler(argv, ctx)
+                return await handler(argv, ctx)
     return False
 
 
 # ── REPL 内置命令处理器 ─────────────────────────────────────────────────────
 
 
-def _cmd_quit(argv: list[str], ctx: dict) -> bool:
-    ctx["memory_manager"].discover_and_update_profile(ctx["thread_id"])
-    ctx["memory_manager"].compress_if_needed(ctx["thread_id"])
+async def _cmd_quit(argv: list[str], ctx: dict) -> bool:
+    facts = await ctx["memory_manager"].discover_and_update_profile(ctx["thread_id"])
+    if facts:
+        print(f"已更新画像：{facts}")
+    await ctx["memory_manager"].compress_if_needed(ctx["thread_id"])
     ctx["registry"].update(ctx["thread_id"])
     print("bye.")
     ctx["running"] = False
     return True
 
 
-def _cmd_reset(argv: list[str], ctx: dict) -> bool:
+async def _cmd_reset(argv: list[str], ctx: dict) -> bool:
     new_tid = ctx["registry"].new_thread_id()
     ctx["registry"].add(new_tid)
     ctx["switch_thread"](new_tid)
     return True
 
 
-def _cmd_sessions(argv: list[str], ctx: dict) -> bool:
+async def _cmd_sessions(argv: list[str], ctx: dict) -> bool:
     print(_format_session_picker(ctx["registry"]))
     return True
 
 
-def _cmd_switch(argv: list[str], ctx: dict) -> bool:
+async def _cmd_switch(argv: list[str], ctx: dict) -> bool:
     if len(argv) < 2:
         print("用法：/switch <编号>")
         return True
@@ -294,7 +302,7 @@ def _cmd_switch(argv: list[str], ctx: dict) -> bool:
     return True
 
 
-def _cmd_delete(argv: list[str], ctx: dict) -> bool:
+async def _cmd_delete(argv: list[str], ctx: dict) -> bool:
     if len(argv) < 2:
         print("用法：/delete <编号>")
         return True
@@ -315,12 +323,12 @@ def _cmd_delete(argv: list[str], ctx: dict) -> bool:
     return True
 
 
-def _cmd_stats(argv: list[str], ctx: dict) -> bool:
+async def _cmd_stats(argv: list[str], ctx: dict) -> bool:
     _print_stats(ctx["memory_manager"], ctx["thread_id"])
     return True
 
 
-def _cmd_soul(argv: list[str], ctx: dict) -> bool:
+async def _cmd_soul(argv: list[str], ctx: dict) -> bool:
     action, value = _parse_soul_command(argv)
     manager_soul = SoulManager()
     if action == "view":
@@ -332,7 +340,7 @@ def _cmd_soul(argv: list[str], ctx: dict) -> bool:
     return True
 
 
-def _cmd_profile(argv: list[str], ctx: dict) -> bool:
+async def _cmd_profile(argv: list[str], ctx: dict) -> bool:
     action, key, value = _parse_profile_command(argv)
     manager_profile = ProfileManager()
     if action == "view":
@@ -370,8 +378,8 @@ _register_command("/profile", False, _cmd_profile)
 # ── REPL 主体 ─────────────────────────────────────────────────────────────
 
 
-def _print_stats(manager: MemoryManager, thread_id: str) -> None:
-    stats = manager.get_stats(thread_id)
+async def _print_stats(manager: MemoryManager, thread_id: str) -> None:
+    stats = await manager.get_stats(thread_id)
     print(f"  当前 thread_id: {thread_id[:8]}... | {stats}")
 
 
@@ -395,22 +403,22 @@ async def _repl_loop_async(
     thread_id: str,
     config: dict,
 ) -> None:
-    def switch_thread(new_tid: str) -> None:
+    async def switch_thread(new_tid: str) -> None:
         nonlocal thread_id
         # 切走前压缩当前会话
         if thread_id and thread_id != new_tid:
-            memory_manager.compress_if_needed(thread_id)
+            await memory_manager.compress_if_needed(thread_id)
         thread_id = new_tid
         config["configurable"]["thread_id"] = new_tid
         if registry.get(new_tid) is None:
             registry.add(new_tid)
-        stats = memory_manager.get_stats(new_tid)
+        stats = await memory_manager.get_stats(new_tid)
         print(f"(已切到会话 {new_tid[:8]}... | {stats})")
 
     print("=" * 60)
-    print("单 Agent 已就绪。可用工具：calculator, current_time, weather, web_search")
+    print("单 Agent 已就绪。可用工具：calculator, current_time, weather, web_search, shell")
     print("命令：/quit 退出 · /reset 新建 · /sessions 列表 · /switch n 切换 · /delete n 删除 · /stats 状态 · /soul [文本] · /profile [key [value]]")
-    _print_stats(memory_manager, thread_id)
+    await _print_stats(memory_manager, thread_id)
     print("=" * 60)
 
     while True:
@@ -418,7 +426,7 @@ async def _repl_loop_async(
             user_input = input("\nYou> ").strip()
         except (EOFError, KeyboardInterrupt):
             # 退出前对当前 thread 做一次压缩
-            memory_manager.compress_if_needed(thread_id)
+            await memory_manager.compress_if_needed(thread_id)
             registry.update(thread_id)
             print("\nbye.")
             return
@@ -438,7 +446,7 @@ async def _repl_loop_async(
         }
 
         # 分发命令
-        if _dispatch(low, argv, ctx):
+        if await _dispatch(low, argv, ctx):
             if not ctx.get("running", True):
                 return
             continue
@@ -469,11 +477,25 @@ async def _repl_loop_async(
             continue
         except Exception as exc:  # noqa: BLE001 — REPL 要吞所有错才能继续
             print(f"\n!!! 运行出错：{type(exc).__name__}: {exc}\n")
+            # astream_events 失败时尝试 ainvoke 保底（消息仍会持久化）
+            try:
+                result = await agent.ainvoke(
+                    {"messages": [{"role": "user", "content": user_input}]},
+                    config=config,
+                )
+                answer = _extract_final_answer(result)
+                print(f"\n>>> {answer}\n")
+            except Exception as inner_exc:
+                # 打印失败不代表消息没持久化，检查 state
+                print(f"\n!!! 备选执行也失败：{type(inner_exc).__name__}: {inner_exc}\n")
+            # 即使打印失败，消息仍可能已持久化，继续处理
+            stats = await memory_manager.get_stats(thread_id)
+            registry.update(thread_id, turn_count=stats.messages // 2)
             continue
 
         # 正常一轮结束后：压缩检查 + 登记活跃时间 / 轮数
-        compressed = memory_manager.compress_if_needed(thread_id)
-        stats = memory_manager.get_stats(thread_id)
+        compressed = await memory_manager.compress_if_needed(thread_id)
+        stats = await memory_manager.get_stats(thread_id)
         # 轮数 = human 消息数；state 里有但 stats 字段没暴露
         registry.update(thread_id, turn_count=stats.messages // 2)
         if compressed:
