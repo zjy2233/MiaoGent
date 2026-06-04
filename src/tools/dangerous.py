@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from src.tools.shell_patterns import CommandClassifier, DangerLevel
+from src.tools.shell_patterns import CommandClassifier, DangerLevel, _parse_tokens
 
 __all__ = ["ConfirmationError", "check_danger", "DangerLevel"]
 
@@ -16,13 +16,21 @@ class ConfirmationError(Exception):
         command: 原始命令字符串
         reason: 危险原因描述
         danger_level: "confirm" 或 "high_risk"
+        safer_alternatives: 替代建议列表
     """
 
-    def __init__(self, command: str, reason: str, danger_level: str):
+    def __init__(
+        self,
+        command: str,
+        reason: str,
+        danger_level: str,
+        safer_alternatives: list[str] | None = None,
+    ):
         super().__init__(f"危险操作：{command} — {reason}（{danger_level}）")
         self.command = command
         self.reason = reason
         self.danger_level = danger_level
+        self.safer_alternatives = safer_alternatives or []
 
 
 def check_danger(command: str) -> ConfirmationError | None:
@@ -32,59 +40,19 @@ def check_danger(command: str) -> ConfirmationError | None:
         None — 安全命令，可直接执行
         ConfirmationError — 需确认或直接拒绝的命令
     """
-    level = CommandClassifier().classify(command)
+    level, reason, alts = CommandClassifier().classify(command)
 
     if level == DangerLevel.SAFE:
         return None
 
     if level == DangerLevel.HIGH_RISK:
-        reason = _get_high_risk_reason(command)
-        return ConfirmationError(command, reason, "high_risk")
+        return ConfirmationError(command, reason or "高危操作", "high_risk", alts)
 
     # CONFIRM
-    reason = _get_confirm_reason(command)
-    return ConfirmationError(command, reason, "confirm")
+    return ConfirmationError(command, reason or "危险操作", "confirm", alts)
 
 
-def _get_high_risk_reason(command: str) -> str:
-    if re.search(r"rm\s+-rf\s+/", command):
-        return "递归删除根目录"
-    if "dd " in command:
-        return "直接磁盘操作"
-    if re.search(r">\s*/dev/(sd|nul|null)", command):
-        return "写入设备文件"
-    if re.search(r"(curl|wget).*\|\s*(sh|bash)", command):
-        return "远程代码执行"
-    if re.search(r":\(\)\s*\{.*:\|", command):
-        return "Fork 炸弹"
-    if "shutdown" in command and "-h" in command:
-        return "系统关机"
-    if "reboot" in command:
-        return "系统重启"
-    if "mkfs" in command:
-        return "格式化分区"
-    return "高危操作"
-
-
-def _get_confirm_reason(command: str) -> str:
-    if re.search(r"\brm\b", command):
-        if re.search(r"\brm\s+-r", command) or re.search(r"\brm\s+-rf", command):
-            return "递归删除目录"
-        return "删除文件"
-    if re.search(r"\bmv\b", command):
-        return "移动/重命名文件"
-    if re.search(r"\bcp\b", command):
-        return "复制文件"
-    if re.search(r"(?<!>)>\s*\w", command):
-        return "重定向覆盖文件"
-    if re.search(r"\bchmod\b", command):
-        return "变更文件权限"
-    if re.search(r"\bchown\b", command):
-        return "变更文件所有权"
-    if re.search(r"\bkill\b", command):
-        return "终止进程"
-    if re.search(r"\bshutdown\b", command):
-        return "系统关机命令"
-    if re.search(r"\breboot\b", command):
-        return "系统重启命令"
-    return "危险操作"
+# ─────────────────────────────────────────────────────────────────────────────
+# 兼容性别名（旧的 _get_high_risk_reason / _get_confirm_reason 已移除，
+# 逻辑已合并到 shell_patterns._shortcut_reason 和各 Layer 处理中）
+# ─────────────────────────────────────────────────────────────────────────────

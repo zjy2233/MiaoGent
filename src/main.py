@@ -455,11 +455,21 @@ async def _repl_loop_async(
             await _invoke_stream(agent, user_input, config)
         except ConfirmationError as exc:
             if exc.danger_level == "high_risk":
-                print(f"\n!!! 高危命令已被拦截：{exc.command}\n   原因：{exc.reason}\n")
+                print(f"\n!!! 高危命令已被拦截：{exc.command}")
+                print(f"   原因：{exc.reason}")
+                if exc.safer_alternatives:
+                    print(f"   替代建议：")
+                    for alt in exc.safer_alternatives:
+                        print(f"     - {alt}")
+                print()
                 continue
             # confirm 级别：打印确认提示
             print(f"\n⚠️  此操作需要确认：{exc.command}")
             print(f"   原因：{exc.reason}")
+            if exc.safer_alternatives:
+                print(f"   替代建议：")
+                for alt in exc.safer_alternatives:
+                    print(f"     - {alt}")
             raw = input("   确认执行？[y/N] ").strip()
             if raw.lower() == "y":
                 # 重新执行（裸执行，不走 astream_events，否则再次抛异常）

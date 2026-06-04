@@ -30,7 +30,10 @@ def shell(command: str, timeout: int = 30) -> str:
     danger = check_danger(command)
     if danger is not None:
         if danger.danger_level == "high_risk":
-            return f"错误：高危命令已被系统拦截 — {danger.reason}"
+            msg = f"错误：高危命令已被系统拦截 — {danger.reason}"
+            if danger.safer_alternatives:
+                msg += f"\n   替代建议：{'；'.join(danger.safer_alternatives)}"
+            return msg
         # confirm 级别抛异常，由 REPL 层处理确认
         raise danger
 
