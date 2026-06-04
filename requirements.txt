@@ -1,0 +1,18 @@
+langchain>=1.0.0
+langchain-openai>=1.0.0
+langchain-community>=0.4.0
+langgraph>=1.0.0
+# SQLite 持久化 checkpointer（langgraph 1.x 拆成独立包）
+langgraph-checkpoint-sqlite>=3.0.0
+aiosqlite>=0.20.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+duckduckgo-search>=8.0.0
+# ddgs 是 duckduckgo-search 的继任包（包名已迁移），建议优先使用
+ddgs>=9.0.0
+pytest>=8.0.0
+pytest-mock>=3.12.0
+# 可选：用于 src.debug --graph 打印 agent 拓扑
+grandalf>=0.8
+# 桌面浮窗：agent_shell.py 用 pywebview 暴露 Api 类给前端
+pywebview>=4.0
