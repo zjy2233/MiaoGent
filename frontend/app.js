@@ -40,52 +40,19 @@ function initBallMode() {
   // ── 防止浏览器原生拖拽幽灵图片 ──────────────────────────
   container.addEventListener('dragstart', (e) => e.preventDefault());
 
-  // ── 鼠标悬浮 → 展开环状菜单 ────────────────────────────
+  // ── 鼠标悬浮 → 展开窗口显示菜单 ─────────────────────────
   let expandTimer = null;
-
-  function positionRingMenu() {
-    const buttons = menu.querySelectorAll('.menu-btn');
-    const count = buttons.length;
-    if (count === 0) return;
-    // 以菜单容器中心为圆心，偏上留出按钮空间
-    const cx = menu.offsetWidth / 2;
-    const cy = menu.offsetHeight * 0.38;
-    const radius = Math.min(cx, cy + 20) * 0.85;
-    const startAngle = -Math.PI * 0.6;
-    const endAngle = Math.PI * 0.6;
-    buttons.forEach((btn, i) => {
-      const ratio = count > 1 ? i / (count - 1) : 0.5;
-      const angle = startAngle + (endAngle - startAngle) * ratio;
-      const x = cx + radius * Math.sin(angle) - btn.offsetWidth / 2;
-      const y = cy - radius * Math.cos(angle) - btn.offsetHeight / 2;
-      btn.style.left = Math.round(x) + 'px';
-      btn.style.top = Math.round(y) + 'px';
-      btn.style.opacity = '1';
-      btn.style.transform = 'scale(1)';
-      btn.style.transitionDelay = (i * 40) + 'ms';
-    });
-  }
 
   wrapper.addEventListener('mouseenter', () => {
     clearTimeout(expandTimer);
     menu.classList.remove('hidden');
-    // 等待 DOM 渲染后定位按钮
-    requestAnimationFrame(() => requestAnimationFrame(positionRingMenu));
     if (window.api && window.api.resizeBall) {
-      window.api.resizeBall(260, 270);
+      window.api.resizeBall(340, 210);
     }
   });
 
   wrapper.addEventListener('mouseleave', () => {
     expandTimer = setTimeout(() => {
-      // 重置按钮位置
-      menu.querySelectorAll('.menu-btn').forEach(btn => {
-        btn.style.opacity = '0';
-        btn.style.transform = 'scale(0.8)';
-        btn.style.transitionDelay = '0ms';
-        btn.style.left = '';
-        btn.style.top = '';
-      });
       menu.classList.add('hidden');
       if (window.api && window.api.resizeBall) {
         window.api.resizeBall(148, 155);
