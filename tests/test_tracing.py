@@ -34,3 +34,85 @@ class TestSpanData:
         assert d["span_type"] == "llm_call"
         assert d["model"] == "deepseek-chat"
         assert d["input_tokens"] == 100
+
+
+import pytest
+from pathlib import Path
+from src.tracing.models import SpanData
+from src.tracing.store import TraceStore
+
+
+class TestTraceStore:
+    def test_write_and_count(self, tmp_path: Path):
+        store = TraceStore(db_path=str(tmp_path / "traces.db"))
+        span = SpanData(span_type="llm_call", trace_id="t1", session_id="s1")
+        store.write_span(span)
+        assert store.count() == 1
+
+    def test_get_trace_spans(self, tmp_path: Path):
+        store = TraceStore(db_path=str(tmp_path / "traces.db"))
+        parent = SpanData(span_type="session_turn", trace_id="t1", session_id="s1")
+        store.write_span(parent)
+        child = SpanData(
+            span_type="llm_call", trace_id="t1", session_id="s1",
+            parent_span_id=parent.span_id,
+        )
+        store.write_span(child)
+        spans = store.get_trace_spans("t1")
+        assert len(spans) == 2
+        # parent first
+        assert spans[0]["span_type"] == "session_turn"
+
+    def test_get_trace_list(self, tmp_path: Path):
+        store = TraceStore(db_path=str(tmp_path / "traces.db"))
+        s1 = SpanData(span_type="session_turn", trace_id="t1", session_id="s1", user_message="hello")
+        s1.end()
+        store.write_span(s1)
+        s2 = SpanData(span_type="session_turn", trace_id="t2", session_id="s1", user_message="world")
+        s2.end()
+        store.write_span(s2)
+        traces = store.get_trace_list()
+        assert len(traces) == 2
+
+    def test_search_by_user_message(self, tmp_path: Path):
+        store = TraceStore(db_path=str(tmp_path / "traces.db"))
+        s = SpanData(span_type="session_turn", trace_id="t1", session_id="s1", user_message="最新AI新闻")
+        s.end()
+        store.write_span(s)
+        results = store.get_trace_list(q="AI")
+        assert len(results) == 1
+
+    def test_get_stats(self, tmp_path: Path):
+        store = TraceStore(db_path=str(tmp_path / "traces.db"))
+        s = SpanData(span_type="session_turn", trace_id="t1", session_id="s1")
+        s.end()
+        s.duration_ms = 1500
+        s.input_tokens = 100
+        s.output_tokens = 50
+        store.write_span(s)
+        s2 = SpanData(span_type="session_turn", trace_id="t2", session_id="s2")
+        s2.end()
+        s2.duration_ms = 500
+        s2.input_tokens = 200
+        s2.output_tokens = 100
+        s2.status = "error"
+        store.write_span(s2)
+        stats = store.get_stats()
+        assert stats["total_traces"] == 2
+        assert stats["total_input_tokens"] == 300
+        assert stats["total_output_tokens"] == 150
+        assert stats["error_count"] == 1
+
+    def test_cleanup_old(self, tmp_path: Path):
+        store = TraceStore(db_path=str(tmp_path / "traces.db"))
+        from datetime import datetime, timedelta, timezone
+        old = SpanData(span_type="session_turn", trace_id="old")
+        old.started_at = (datetime.now(timezone.utc) - timedelta(days=35)).isoformat()
+        old.end()
+        store.write_span(old)
+        new = SpanData(span_type="session_turn", trace_id="new")
+        new.end()
+        store.write_span(new)
+        store.cleanup(retention_days=30)
+        assert store.count() == 1
+        assert store.get_trace_spans("new")
