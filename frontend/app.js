@@ -64,52 +64,15 @@ function initBallMode() {
       btn.style.transform = 'scale(1)';
       btn.style.transitionDelay = (i * 40) + 'ms';
     });
-
-    // 计算窗口裁剪区域：只保留吉祥物 + 按钮区域，消除方形裁切
-    const shapeRects = [];
-    // 吉祥物区域
-    const mRect = container.getBoundingClientRect();
-    shapeRects.push({
-      x: Math.round(mRect.left), y: Math.round(mRect.top),
-      width: Math.round(mRect.width), height: Math.round(mRect.height),
-    });
-    // 各按钮
-    buttons.forEach(btn => {
-      const r = btn.getBoundingClientRect();
-      shapeRects.push({
-        x: Math.round(r.left), y: Math.round(r.top),
-        width: Math.round(r.width), height: Math.round(r.height),
-      });
-    });
-    // 关闭按钮
-    const closeBtn = document.getElementById('ball-close-btn');
-    if (closeBtn) {
-      const r = closeBtn.getBoundingClientRect();
-      shapeRects.push({
-        x: Math.round(r.left), y: Math.round(r.top),
-        width: Math.round(r.width), height: Math.round(r.height),
-      });
-    }
-    if (window.api && window.api.setWindowShape) {
-      window.api.setWindowShape(shapeRects);
-    }
   }
 
   wrapper.addEventListener('mouseenter', () => {
     clearTimeout(expandTimer);
     menu.classList.remove('hidden');
-    // 先放大窗口确保环形菜单有足够空间
-    if (window.api && window.api.resizeBall) {
-      window.api.resizeBall(320, 340);
-    }
-    // 尝试立即定位（若窗口已够大则生效）
+    // 等待 DOM 渲染后定位按钮
     requestAnimationFrame(() => requestAnimationFrame(positionRingMenu));
-  });
-
-  // 窗口真正完成 resize 后重新定位（IPC resize 异步到达）
-  window.addEventListener('resize', () => {
-    if (!menu.classList.contains('hidden')) {
-      requestAnimationFrame(() => requestAnimationFrame(positionRingMenu));
+    if (window.api && window.api.resizeBall) {
+      window.api.resizeBall(260, 270);
     }
   });
 
@@ -123,10 +86,6 @@ function initBallMode() {
         btn.style.left = '';
         btn.style.top = '';
       });
-      // 恢复矩形窗口
-      if (window.api && window.api.setWindowShape) {
-        window.api.setWindowShape([]);
-      }
       menu.classList.add('hidden');
       if (window.api && window.api.resizeBall) {
         window.api.resizeBall(148, 155);
