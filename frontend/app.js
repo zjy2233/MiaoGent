@@ -47,11 +47,12 @@ function initBallMode() {
     const buttons = menu.querySelectorAll('.menu-btn');
     const count = buttons.length;
     if (count === 0) return;
-    // 以窗口中心为圆心（吉祥物 centered 后与窗口中心重合）
+    // 圆心 = 吉祥物中心（吉祥物始终在顶部 flex-start）
     const cx = menu.offsetWidth / 2;
-    const cy = menu.offsetHeight / 2;
-    // 半径自适应：取较小边的 60%，确保按钮不溢出
-    const radius = Math.min(cx, cy) * 0.6;
+    const cy = 70; // 140/2
+    // 半径自适应：取窗口较小边和半径上限的最小值
+    const maxRadius = Math.min(menu.offsetWidth, menu.offsetHeight) * 0.38;
+    const radius = Math.min(cx - 50, maxRadius);
     const startAngle = -Math.PI / 2; // 从正上方开始
     buttons.forEach((btn, i) => {
       const angle = startAngle + (2 * Math.PI * i) / count;
@@ -64,40 +65,41 @@ function initBallMode() {
       btn.style.transitionDelay = (i * 40) + 'ms';
     });
 
-    // 窗口裁剪：只保留吉祥物 + 按钮区域
-    const shapeRects = [];
-    const mRect = container.getBoundingClientRect();
-    shapeRects.push({
-      x: Math.round(mRect.left), y: Math.round(mRect.top),
-      width: Math.round(mRect.width), height: Math.round(mRect.height),
-    });
-    buttons.forEach(btn => {
-      const r = btn.getBoundingClientRect();
-      shapeRects.push({
-        x: Math.round(r.left), y: Math.round(r.top),
-        width: Math.round(r.width), height: Math.round(r.height),
-      });
-    });
+    // 把关闭按钮移到吉祥物右上角
     const closeBtn = document.getElementById('ball-close-btn');
     if (closeBtn) {
-      const r = closeBtn.getBoundingClientRect();
-      shapeRects.push({
-        x: Math.round(r.left), y: Math.round(r.top),
-        width: Math.round(r.width), height: Math.round(r.height),
-      });
+      const mr = container.getBoundingClientRect();
+      closeBtn.style.position = 'fixed';
+      closeBtn.style.top = Math.round(mr.top + 2) + 'px';
+      closeBtn.style.left = Math.round(mr.right - 24) + 'px';
+      closeBtn.style.right = 'auto';
     }
-    if (window.api && window.api.setWindowShape) {
-      window.api.setWindowShape(shapeRects);
+  }
+
+  function resetMenuLayout() {
+    menu.querySelectorAll('.menu-btn').forEach(btn => {
+      btn.style.opacity = '0';
+      btn.style.transform = 'scale(0.8)';
+      btn.style.transitionDelay = '0ms';
+      btn.style.left = '';
+      btn.style.top = '';
+    });
+    // 恢复关闭按钮位置
+    const closeBtn = document.getElementById('ball-close-btn');
+    if (closeBtn) {
+      closeBtn.style.position = '';
+      closeBtn.style.top = '';
+      closeBtn.style.left = '';
+      closeBtn.style.right = '';
     }
   }
 
   wrapper.addEventListener('mouseenter', () => {
     clearTimeout(expandTimer);
     menu.classList.remove('hidden');
-    wrapper.classList.add('expanded');
-    // 以当前窗口为中心均匀放大（吉祥物屏幕位置不变）
+    // 均匀放大，吉祥物停留在原屏幕位置
     if (window.api && window.api.resizeBallCentered) {
-      window.api.resizeBallCentered(340, 340);
+      window.api.resizeBallCentered(340, 280);
     }
     requestAnimationFrame(() => requestAnimationFrame(positionRingMenu));
   });
@@ -111,17 +113,7 @@ function initBallMode() {
 
   wrapper.addEventListener('mouseleave', () => {
     expandTimer = setTimeout(() => {
-      menu.querySelectorAll('.menu-btn').forEach(btn => {
-        btn.style.opacity = '0';
-        btn.style.transform = 'scale(0.8)';
-        btn.style.transitionDelay = '0ms';
-        btn.style.left = '';
-        btn.style.top = '';
-      });
-      wrapper.classList.remove('expanded');
-      if (window.api && window.api.setWindowShape) {
-        window.api.setWindowShape([]);
-      }
+      resetMenuLayout();
       menu.classList.add('hidden');
       if (window.api && window.api.resizeBallCentered) {
         window.api.resizeBallCentered(148, 155);
@@ -133,11 +125,9 @@ function initBallMode() {
   menuBtns.forEach((btn) => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
+      clearTimeout(expandTimer);
       menu.classList.add('hidden');
-      wrapper.classList.remove('expanded');
-      if (window.api && window.api.setWindowShape) {
-        window.api.setWindowShape([]);
-      }
+      resetMenuLayout();
       if (window.api && window.api.resizeBallCentered) {
         window.api.resizeBallCentered(148, 155);
       }

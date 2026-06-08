@@ -35,10 +35,6 @@ html:not(.panel-mode) {
   position: relative;
 }
 
-#ball-wrapper.expanded {
-  justify-content: center;
-}
-
 #mascot-container {
   width: 140px;
   height: 140px;
@@ -73,45 +69,50 @@ html:not(.panel-mode) {
 
 .menu-btn {
   position: absolute;
-  padding: 6px 14px;
-  border: none;
-  border-radius: 14px;
-  background: rgba(255, 255, 255, 0.25);
-  color: white;
+  padding: 7px 16px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 16px;
+  background: rgba(24, 24, 42, 0.88);
+  color: #eee;
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   pointer-events: auto;
-  transition: opacity 200ms ease, transform 200ms ease, background 120ms;
-  backdrop-filter: blur(8px);
+  transition: opacity 200ms ease, transform 200ms ease, background 120ms, border-color 120ms;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
   text-align: center;
   white-space: nowrap;
   opacity: 0;
   transform: scale(0.8);
-  box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  min-width: 70px;
 }
 
 .menu-btn:hover {
-  background: rgba(255, 255, 255, 0.35);
-  transform: scale(1.15) !important;
+  background: rgba(40, 40, 65, 0.92);
+  transform: scale(1.12) !important;
+  border-color: rgba(255, 255, 255, 0.3);
 }
 
 .menu-btn[data-panel="settings"] {
-  background: rgba(162, 155, 254, 0.6);
+  border-color: rgba(162, 155, 254, 0.5);
 }
 
 .menu-btn[data-panel="chat"] {
-  background: rgba(116, 185, 255, 0.6);
+  border-color: rgba(116, 185, 255, 0.5);
 }
 
 .menu-btn[data-panel="tools"] {
-  background: rgba(253, 203, 110, 0.6);
-  color: #222;
+  border-color: rgba(253, 203, 110, 0.5);
 }
 
 .menu-btn[data-panel="skills"] {
-  background: rgba(0, 206, 201, 0.55);
-  color: #eee;
+  border-color: rgba(0, 206, 201, 0.5);
+}
+
+.menu-btn[data-panel="monitoring"] {
+  border-color: rgba(255, 121, 198, 0.5);
 }
 
 #ball-close-btn {
