@@ -165,31 +165,36 @@ class TraceStore:
             conn = sqlite3.connect(self._db_path)
             try:
                 today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                today_end = today + " 23:59:59"
+                # session_turn count, avg duration, error count
                 row = conn.execute(
                     "SELECT COUNT(*) as total_traces, "
-                    "COALESCE(SUM(input_tokens), 0) as total_input_tokens, "
-                    "COALESCE(SUM(output_tokens), 0) as total_output_tokens, "
                     "COALESCE(AVG(duration_ms), 0) as avg_duration_ms, "
                     "SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) as error_count "
-                    "FROM spans WHERE span_type='session_turn' AND started_at >= ?",
-                    (today,),
+                    "FROM spans WHERE span_type='session_turn' AND started_at >= ? AND started_at <= ?",
+                    (today, today_end),
+                ).fetchone()
+                # token sums from ALL spans today (token data lives on llm_call spans)
+                row_t = conn.execute(
+                    "SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0) "
+                    "FROM spans WHERE started_at >= ? AND started_at <= ?",
+                    (today, today_end),
                 ).fetchone()
                 yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
                 row_y = conn.execute(
-                    "SELECT COUNT(*) as total_traces, "
-                    "COALESCE(SUM(input_tokens+output_tokens), 0) as total_tokens "
-                    "FROM spans WHERE span_type='session_turn' AND started_at >= ? AND started_at < ?",
+                    "SELECT COALESCE(SUM(input_tokens+output_tokens), 0) "
+                    "FROM spans WHERE started_at >= ? AND started_at < ?",
                     (yesterday, today),
                 ).fetchone()
                 return {
                     "total_traces": row[0],
-                    "total_input_tokens": row[1],
-                    "total_output_tokens": row[2],
-                    "total_tokens": row[1] + row[2],
-                    "avg_duration_ms": round(row[3], 1),
-                    "error_count": row[4],
-                    "error_rate": round(row[4] / row[0] * 100, 1) if row[0] > 0 else 0,
-                    "yesterday_tokens": int(row_y[1]) if row_y[1] else 0,
+                    "total_input_tokens": row_t[0],
+                    "total_output_tokens": row_t[1],
+                    "total_tokens": row_t[0] + row_t[1],
+                    "avg_duration_ms": round(row[1], 1),
+                    "error_count": row[2],
+                    "error_rate": round(row[2] / row[0] * 100, 1) if row[0] > 0 else 0,
+                    "yesterday_tokens": int(row_y[0]) if row_y[0] else 0,
                 }
             finally:
                 conn.close()
@@ -200,11 +205,19 @@ class TraceStore:
             try:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.execute(
-                    "SELECT DATE(started_at) as day, "
-                    "COUNT(*) as count, "
-                    "COALESCE(SUM(input_tokens+output_tokens), 0) as total_tokens "
-                    "FROM spans WHERE span_type='session_turn' "
-                    "GROUP BY DATE(started_at) ORDER BY day DESC LIMIT 14"
+                    "SELECT d.day, d.count, "
+                    "COALESCE(t.token_sum, 0) as total_tokens "
+                    "FROM ("
+                    "  SELECT DATE(started_at) as day, COUNT(*) as count "
+                    "  FROM spans WHERE span_type='session_turn' "
+                    "  GROUP BY DATE(started_at)"
+                    ") d "
+                    "LEFT JOIN ("
+                    "  SELECT DATE(started_at) as day, "
+                    "  COALESCE(SUM(input_tokens+output_tokens), 0) as token_sum "
+                    "  FROM spans GROUP BY DATE(started_at)"
+                    ") t ON d.day = t.day "
+                    "ORDER BY d.day DESC LIMIT 14"
                 )
                 return [self._row_to_dict(row) for row in cursor.fetchall()]
             finally:
