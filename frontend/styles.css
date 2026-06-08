@@ -35,10 +35,6 @@ html:not(.panel-mode) {
   position: relative;
 }
 
-#ball-wrapper.expanded {
-  justify-content: center;
-}
-
 #mascot-container {
   width: 140px;
   height: 140px;

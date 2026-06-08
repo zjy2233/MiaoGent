@@ -181,19 +181,6 @@ ipcMain.on('resize-ball', (_event, w, h) => {
   } catch (err) { console.error('[agent-shell] resize error:', err); }
 });
 
-// 以当前窗口中心为基准缩放（保持吉祥物屏幕位置不变）
-ipcMain.on('resize-ball-centered', (_event, w, h) => {
-  if (!ballWindow) return;
-  try {
-    const [oldW, oldH] = ballWindow.getSize();
-    const [x, y] = ballWindow.getPosition();
-    const newX = x - Math.round((w - oldW) / 2);
-    const newY = y - Math.round((h - oldH) / 2);
-    ballWindow.setPosition(newX, newY);
-    ballWindow.setSize(Math.round(w), Math.round(h));
-  } catch (err) { console.error('[agent-shell] resize-centered error:', err); }
-});
-
 // 非矩形窗口裁剪（环形菜单需要）
 ipcMain.on('set-window-shape', (_event, rects) => {
   if (!ballWindow) return;
