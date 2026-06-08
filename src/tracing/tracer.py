@@ -23,15 +23,16 @@ class Tracer:
         **kwargs: Any,
     ) -> str:
         parent_span_id = self._span_stack[-1] if self._span_stack else None
-        span = SpanData(
+        span_kwargs = dict(
             span_type=span_type,
-            trace_id=trace_id or "",
             parent_span_id=parent_span_id,
             session_id=self._session_id,
             session_turn=self._session_turn,
             user_message=user_message,
-            **kwargs,
         )
+        if trace_id:
+            span_kwargs["trace_id"] = trace_id
+        span = SpanData(**span_kwargs, **kwargs)
         # inherit trace_id from root span if not set
         if not span.trace_id and self._span_stack:
             span.trace_id = self._spans[self._span_stack[0]].trace_id
