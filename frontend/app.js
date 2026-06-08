@@ -47,7 +47,7 @@ function initBallMode() {
     clearTimeout(expandTimer);
     menu.classList.remove('hidden');
     if (window.api && window.api.resizeBall) {
-      window.api.resizeBall(260, 220);
+      window.api.resizeBall(280, 220);
     }
   });
 

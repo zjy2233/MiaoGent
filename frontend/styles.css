@@ -63,7 +63,7 @@ html:not(.panel-mode) {
   row-gap: 6px;
   padding: 8px 10px;
   z-index: 1;
-  max-width: 230px;
+  max-width: 270px;
 }
 
 #hover-menu.hidden {
