@@ -40,24 +40,23 @@ function initBallMode() {
   // ── 防止浏览器原生拖拽幽灵图片 ──────────────────────────
   container.addEventListener('dragstart', (e) => e.preventDefault());
 
-  // ── 鼠标悬浮 → 展开环状菜单 ────────────────────────────
+  // ── 鼠标悬浮 → 展开 360° 环绕菜单 ──────────────────────
   let expandTimer = null;
 
   function positionRingMenu() {
     const buttons = menu.querySelectorAll('.menu-btn');
     const count = buttons.length;
     if (count === 0) return;
-    // 以菜单容器中心为圆心，偏上留出按钮空间
+    // 以窗口中心为圆心（吉祥物 centered 后与窗口中心重合）
     const cx = menu.offsetWidth / 2;
-    const cy = menu.offsetHeight * 0.38;
-    const radius = Math.min(cx, cy + 20) * 0.85;
-    const startAngle = -Math.PI * 0.6;
-    const endAngle = Math.PI * 0.6;
+    const cy = menu.offsetHeight / 2;
+    // 半径自适应：取较小边的 60%，确保按钮不溢出
+    const radius = Math.min(cx, cy) * 0.6;
+    const startAngle = -Math.PI / 2; // 从正上方开始
     buttons.forEach((btn, i) => {
-      const ratio = count > 1 ? i / (count - 1) : 0.5;
-      const angle = startAngle + (endAngle - startAngle) * ratio;
-      const x = cx + radius * Math.sin(angle) - btn.offsetWidth / 2;
-      const y = cy - radius * Math.cos(angle) - btn.offsetHeight / 2;
+      const angle = startAngle + (2 * Math.PI * i) / count;
+      const x = cx + radius * Math.cos(angle) - btn.offsetWidth / 2;
+      const y = cy + radius * Math.sin(angle) - btn.offsetHeight / 2;
       btn.style.left = Math.round(x) + 'px';
       btn.style.top = Math.round(y) + 'px';
       btn.style.opacity = '1';
@@ -65,15 +64,13 @@ function initBallMode() {
       btn.style.transitionDelay = (i * 40) + 'ms';
     });
 
-    // 计算窗口裁剪区域：只保留吉祥物 + 按钮区域，消除方形裁切
+    // 窗口裁剪：只保留吉祥物 + 按钮区域
     const shapeRects = [];
-    // 吉祥物区域
     const mRect = container.getBoundingClientRect();
     shapeRects.push({
       x: Math.round(mRect.left), y: Math.round(mRect.top),
       width: Math.round(mRect.width), height: Math.round(mRect.height),
     });
-    // 各按钮
     buttons.forEach(btn => {
       const r = btn.getBoundingClientRect();
       shapeRects.push({
@@ -81,7 +78,6 @@ function initBallMode() {
         width: Math.round(r.width), height: Math.round(r.height),
       });
     });
-    // 关闭按钮
     const closeBtn = document.getElementById('ball-close-btn');
     if (closeBtn) {
       const r = closeBtn.getBoundingClientRect();
@@ -98,15 +94,15 @@ function initBallMode() {
   wrapper.addEventListener('mouseenter', () => {
     clearTimeout(expandTimer);
     menu.classList.remove('hidden');
-    // 先放大窗口确保环形菜单有足够空间
-    if (window.api && window.api.resizeBall) {
-      window.api.resizeBall(320, 340);
+    wrapper.classList.add('expanded');
+    // 以当前窗口为中心均匀放大（吉祥物屏幕位置不变）
+    if (window.api && window.api.resizeBallCentered) {
+      window.api.resizeBallCentered(340, 340);
     }
-    // 尝试立即定位（若窗口已够大则生效）
     requestAnimationFrame(() => requestAnimationFrame(positionRingMenu));
   });
 
-  // 窗口真正完成 resize 后重新定位（IPC resize 异步到达）
+  // resize 完成后重新定位（异步 IPC 到达后）
   window.addEventListener('resize', () => {
     if (!menu.classList.contains('hidden')) {
       requestAnimationFrame(() => requestAnimationFrame(positionRingMenu));
@@ -115,7 +111,6 @@ function initBallMode() {
 
   wrapper.addEventListener('mouseleave', () => {
     expandTimer = setTimeout(() => {
-      // 重置按钮位置
       menu.querySelectorAll('.menu-btn').forEach(btn => {
         btn.style.opacity = '0';
         btn.style.transform = 'scale(0.8)';
@@ -123,13 +118,13 @@ function initBallMode() {
         btn.style.left = '';
         btn.style.top = '';
       });
-      // 恢复矩形窗口
+      wrapper.classList.remove('expanded');
       if (window.api && window.api.setWindowShape) {
         window.api.setWindowShape([]);
       }
       menu.classList.add('hidden');
-      if (window.api && window.api.resizeBall) {
-        window.api.resizeBall(148, 155);
+      if (window.api && window.api.resizeBallCentered) {
+        window.api.resizeBallCentered(148, 155);
       }
     }, 300);
   });
@@ -139,8 +134,12 @@ function initBallMode() {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       menu.classList.add('hidden');
-      if (window.api && window.api.resizeBall) {
-        window.api.resizeBall(148, 155);
+      wrapper.classList.remove('expanded');
+      if (window.api && window.api.setWindowShape) {
+        window.api.setWindowShape([]);
+      }
+      if (window.api && window.api.resizeBallCentered) {
+        window.api.resizeBallCentered(148, 155);
       }
       if (window.api && window.api.openPanel) {
         window.api.openPanel(btn.dataset.panel);
