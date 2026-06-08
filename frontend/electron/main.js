@@ -14,8 +14,8 @@ const { spawn, execSync } = require('child_process');
 const PORT = 18794;
 const BALL_W = 148;
 const BALL_H = 155;
-const BALL_W_EXPANDED = 220;
-const BALL_H_EXPANDED = 180;
+const BALL_W_EXPANDED = 260;
+const BALL_H_EXPANDED = 220;
 const PANEL_W = 420;
 const PANEL_H = 520;
 
