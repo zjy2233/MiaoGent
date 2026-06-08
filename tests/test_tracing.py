@@ -147,3 +147,76 @@ class TestTracer:
         finished = t.finished_spans
         assert len(finished) == 1
         assert finished[0].span_id == sid
+
+
+from src.tracing.handler import TraceCallbackHandler
+
+
+class TestTraceCallbackHandler:
+    def test_handler_initialization(self, tmp_path):
+        store = TraceStore(db_path=str(tmp_path / "traces.db"))
+        handler = TraceCallbackHandler(store, session_id="s1")
+        assert handler.session_id == "s1"
+
+    def test_on_llm_start_end(self, tmp_path):
+        store = TraceStore(db_path=str(tmp_path / "traces.db"))
+        handler = TraceCallbackHandler(store, session_id="s1", session_turn=1)
+        import uuid
+        run_id = uuid.uuid4()
+        handler.on_llm_start(
+            {"name": "test"}, ["prompt"],
+            run_id=run_id, parent_run_id=None,
+        )
+        assert run_id in handler._run_id_to_span_id
+        handler.on_llm_end(
+            type("LLMResult", (), {
+                "generations": [[]],
+                "llm_output": {"token_usage": {"prompt_tokens": 100, "completion_tokens": 50}},
+            })(),
+            run_id=run_id,
+        )
+        spans = store.get_trace_spans(handler._trace_id)
+        llm_spans = [s for s in spans if s["span_type"] == "llm_call"]
+        assert len(llm_spans) == 1
+        assert llm_spans[0]["input_tokens"] == 100
+        assert llm_spans[0]["output_tokens"] == 50
+
+    def test_on_tool_start_end(self, tmp_path):
+        store = TraceStore(db_path=str(tmp_path / "traces.db"))
+        handler = TraceCallbackHandler(store, session_id="s1", session_turn=1)
+        import uuid
+        run_id = uuid.uuid4()
+        handler.on_tool_start(
+            {"name": "search"}, "input json",
+            run_id=run_id, parent_run_id=None,
+        )
+        handler.on_tool_end("output result", run_id=run_id)
+        spans = store.get_trace_spans(handler._trace_id)
+        tool_spans = [s for s in spans if s["span_type"] == "tool_call"]
+        assert len(tool_spans) == 1
+        assert tool_spans[0]["tool_name"] == "search"
+
+
+from src.tracing.api import TracingAPI
+from src.tracing.models import SpanData
+
+
+class TestTracingAPI:
+    def test_get_trace_tree(self, tmp_path):
+        store = TraceStore(db_path=str(tmp_path / "traces.db"))
+        api = TracingAPI(store)
+        parent = SpanData(span_type="session_turn", trace_id="t1", session_id="s1", user_message="hi")
+        parent.end()
+        parent.duration_ms = 1000
+        store.write_span(parent)
+        child = SpanData(
+            span_type="llm_call", trace_id="t1", session_id="s1",
+            parent_span_id=parent.span_id, model="deepseek-chat",
+        )
+        child.end()
+        child.duration_ms = 500
+        store.write_span(child)
+        tree = api.get_trace_tree("t1")
+        assert tree["trace_id"] == "t1"
+        assert len(tree["spans"]) == 2
+        assert tree["total_duration_ms"] == 1000

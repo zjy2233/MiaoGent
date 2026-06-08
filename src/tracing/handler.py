@@ -1,0 +1,195 @@
+"""TraceCallbackHandler — LangChain 事件采集，零侵入。"""
+
+from __future__ import annotations
+
+import uuid
+from typing import Any
+
+from langchain_core.callbacks import BaseCallbackHandler
+
+from src.tracing.tracer import Tracer
+from src.tracing.store import TraceStore
+
+
+class TraceCallbackHandler(BaseCallbackHandler):
+    """LangChain BaseCallbackHandler 实现，通过回调采集 trace 数据。
+
+    注意：本 handler 的 start/end 回调中会直接读写 Tracer，
+    Tracer 维护了 '当前 span' 栈，确保嵌套关系正确。
+    """
+
+    def __init__(
+        self,
+        store: TraceStore,
+        session_id: str = "",
+        session_turn: int = 0,
+    ) -> None:
+        super().__init__()
+        self.store = store
+        self.session_id = session_id
+        self.session_turn = session_turn
+        self._tracer: Tracer | None = None
+        self._trace_id: str = ""
+        self._run_id_to_span_id: dict[uuid.UUID, str] = {}
+        self._has_root = False
+
+    def _ensure_tracer(self) -> Tracer:
+        if self._tracer is None:
+            self._tracer = Tracer(session_id=self.session_id, session_turn=self.session_turn)
+        return self._tracer
+
+    def _extract_tokens(self, llm_output: dict | None) -> tuple[int, int]:
+        if not llm_output:
+            return 0, 0
+        usage = llm_output.get("token_usage") or llm_output.get("usage") or {}
+        if isinstance(usage, dict):
+            return usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
+        return 0, 0
+
+    # ── Chain (用于 session_turn + agent_step) ──
+
+    def on_chain_start(
+        self, serialized: dict[str, Any], inputs: dict[str, Any],
+        *, run_id: uuid.UUID, parent_run_id: uuid.UUID | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        tracer = self._ensure_tracer()
+        user_message = ""
+        if not self._has_root:
+            self._has_root = True
+            # root chain → session_turn
+            messages = inputs.get("messages", [])
+            if messages:
+                last = messages[-1] if isinstance(messages, list) else messages
+                content = getattr(last, "content", "") if not isinstance(last, str) else last
+                if isinstance(content, str):
+                    user_message = content[:200]
+            span_id = tracer.start_span(
+                "session_turn", user_message=user_message,
+            )
+            self._trace_id = tracer._spans[span_id].trace_id
+            self._run_id_to_span_id[run_id] = span_id
+        else:
+            span_id = tracer.start_span("agent_step")
+            self._run_id_to_span_id[run_id] = span_id
+
+    def on_chain_end(
+        self, outputs: dict[str, Any],
+        *, run_id: uuid.UUID, **kwargs: Any,
+    ) -> Any:
+        tracer = self._tracer
+        if not tracer:
+            return
+        span_id = self._run_id_to_span_id.pop(run_id, None)
+        if span_id:
+            tracer.end_span(span_id)
+            span = tracer._spans.get(span_id)
+            if span:
+                self.store.write_span(span)
+
+    def on_chain_error(
+        self, error: Exception,
+        *, run_id: uuid.UUID, **kwargs: Any,
+    ) -> Any:
+        tracer = self._tracer
+        if not tracer:
+            return
+        span_id = self._run_id_to_span_id.pop(run_id, None)
+        if span_id:
+            tracer.end_span(span_id, status="error", error_message=str(error))
+            span = tracer._spans.get(span_id)
+            if span:
+                self.store.write_span(span)
+
+    # ── LLM ──
+
+    def on_llm_start(
+        self, serialized: dict[str, Any], prompts: list[str],
+        *, run_id: uuid.UUID, parent_run_id: uuid.UUID | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        name = serialized.get("name", "") if isinstance(serialized, dict) else ""
+        tracer = self._ensure_tracer()
+        span_id = tracer.start_span("llm_call", model=name or "unknown")
+        self._run_id_to_span_id[run_id] = span_id
+        if not self._trace_id:
+            self._trace_id = tracer._spans[span_id].trace_id
+
+    def on_llm_end(
+        self, response: Any,
+        *, run_id: uuid.UUID, **kwargs: Any,
+    ) -> Any:
+        tracer = self._tracer
+        if not tracer:
+            return
+        span_id = self._run_id_to_span_id.pop(run_id, None)
+        if not span_id:
+            return
+        llm_output = getattr(response, "llm_output", None)
+        if isinstance(llm_output, dict):
+            input_t, output_t = self._extract_tokens(llm_output)
+            span = tracer._spans.get(span_id)
+            if span:
+                span.input_tokens = input_t
+                span.output_tokens = output_t
+        tracer.end_span(span_id)
+        span = tracer._spans.get(span_id)
+        if span:
+            self.store.write_span(span)
+
+    def on_llm_error(
+        self, error: Exception,
+        *, run_id: uuid.UUID, **kwargs: Any,
+    ) -> Any:
+        tracer = self._tracer
+        if not tracer:
+            return
+        span_id = self._run_id_to_span_id.pop(run_id, None)
+        if span_id:
+            tracer.end_span(span_id, status="error", error_message=str(error))
+            span = tracer._spans.get(span_id)
+            if span:
+                self.store.write_span(span)
+
+    # ── Tool ──
+
+    def on_tool_start(
+        self, serialized: dict[str, Any], input_str: str,
+        *, run_id: uuid.UUID, parent_run_id: uuid.UUID | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        tracer = self._ensure_tracer()
+        name = (serialized.get("name", "") if isinstance(serialized, dict)
+                else getattr(serialized, "name", ""))
+        span_id = tracer.start_span("tool_call", tool_name=name or "unknown", tool_input=input_str[:500])
+        self._run_id_to_span_id[run_id] = span_id
+        if not self._trace_id:
+            self._trace_id = tracer._spans[span_id].trace_id
+
+    def on_tool_end(
+        self, output: Any,
+        *, run_id: uuid.UUID, **kwargs: Any,
+    ) -> Any:
+        tracer = self._tracer
+        if not tracer:
+            return
+        span_id = self._run_id_to_span_id.pop(run_id, None)
+        if span_id:
+            tracer.end_span(span_id)
+            span = tracer._spans.get(span_id)
+            if span:
+                self.store.write_span(span)
+
+    def on_tool_error(
+        self, error: Exception,
+        *, run_id: uuid.UUID, **kwargs: Any,
+    ) -> Any:
+        tracer = self._tracer
+        if not tracer:
+            return
+        span_id = self._run_id_to_span_id.pop(run_id, None)
+        if span_id:
+            tracer.end_span(span_id, status="error", error_message=str(error))
+            span = tracer._spans.get(span_id)
+            if span:
+                self.store.write_span(span)
