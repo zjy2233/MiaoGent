@@ -56,12 +56,13 @@ html:not(.panel-mode) {
 #hover-menu {
   display: flex;
   flex-direction: row;
+  flex-wrap: wrap;
   justify-content: center;
   align-items: center;
-  gap: 10px;
-  padding: 8px 0 6px;
-  white-space: nowrap;
+  gap: 6px 10px;
+  padding: 10px 14px 8px;
   z-index: 1;
+  max-width: 210px;
 }
 
 #hover-menu.hidden {
@@ -104,6 +105,10 @@ html:not(.panel-mode) {
 .menu-btn[data-panel="skills"] {
   background: rgba(0, 206, 201, 0.55);
   color: #eee;
+}
+
+.menu-btn[data-panel="monitoring"] {
+  background: rgba(255, 121, 198, 0.55);
 }
 
 #ball-close-btn {
