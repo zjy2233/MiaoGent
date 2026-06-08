@@ -173,6 +173,7 @@ const api = {
   // ── IPC: 窗口控制 ──────────────────────────────────────────────────
   ballDragMove: (dx, dy) => ipcRenderer.send('ball-drag-move', dx, dy),
   resizeBall: (w, h) => ipcRenderer.send('resize-ball', w, h),
+  setWindowShape: (rects) => ipcRenderer.send('set-window-shape', rects),
   openPanel: (name) => ipcRenderer.send('open-panel', name),
   closePanel: () => ipcRenderer.send('close-panel'),
   toggleMaximize: () => ipcRenderer.send('toggle-maximize'),

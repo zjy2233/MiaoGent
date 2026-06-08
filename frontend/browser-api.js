@@ -143,6 +143,7 @@
     // ── IPC 窗口控制（浏览器模式下为 noop） ──
     ballDragMove: () => {},
     resizeBall: () => {},
+    setWindowShape: () => {},
     openPanel: (name) => {
       // 浏览器模式: 跳转到 ?panel=<name>
       const url = new URL(window.location);
