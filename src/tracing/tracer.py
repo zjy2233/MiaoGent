@@ -32,10 +32,10 @@ class Tracer:
         )
         if trace_id:
             span_kwargs["trace_id"] = trace_id
+        elif self._span_stack:
+            # inherit trace_id from root span
+            span_kwargs["trace_id"] = self._spans[self._span_stack[0]].trace_id
         span = SpanData(**span_kwargs, **kwargs)
-        # inherit trace_id from root span if not set
-        if not span.trace_id and self._span_stack:
-            span.trace_id = self._spans[self._span_stack[0]].trace_id
         self._spans[span.span_id] = span
         self._span_stack.append(span.span_id)
         return span.span_id

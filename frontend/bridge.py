@@ -593,6 +593,7 @@ class Api:
             ):
                 kind = event.get("event", "")
                 run_id = event.get("run_id")
+                import sys as _sys; _sys.stderr.write(f'[trace-debug] kind={kind} run_id={run_id}\n')
 
                 # ── Tracing spans ──
                 if tracer is not None:
@@ -605,15 +606,23 @@ class Api:
                         run_id_to_span_id[run_id] = sid
                     elif kind == "on_chat_model_end":
                         sid = run_id_to_span_id.pop(run_id, None)
+                        _sys.stderr.write(f'[trace-debug] chat_model_end sid={sid} run_id_type={type(run_id).__name__}\n')
                         if sid:
                             resp = event.get("data", {}).get("output", {})
-                            usage = getattr(resp, "usage_metadata", None)
-                            if isinstance(usage, dict):
+                            _sys.stderr.write(f'[trace-debug] resp_type={type(resp).__name__}\n')
+                            # Try both AIMessage.usage_metadata and dict access
+                            if isinstance(resp, dict):
+                                usage = resp.get("usage_metadata") or {}
+                            else:
+                                usage = getattr(resp, "usage_metadata", {})
+                            if isinstance(usage, dict) and usage:
                                 span = tracer._spans.get(sid)
                                 if span:
                                     span.input_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
                                     span.output_tokens = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
                             tracer.end_span(sid)
+                            span = tracer._spans.get(sid)
+                            _sys.stderr.write(f'[trace-debug] span ended: tokens={span.input_tokens}+{span.output_tokens if span else "N/A"}\n')
                     elif kind == "on_chat_model_error":
                         sid = run_id_to_span_id.pop(run_id, None)
                         if sid:
@@ -716,11 +725,14 @@ class Api:
         finally:
             # ── Tracing: 结束根 span 并写入 store ──
             if tracer is not None and self._tracing_api is not None:
+                _sys.stderr.write(f'[trace-debug] finally: stack={len(tracer._span_stack)} spans={len(tracer._spans)}\n')
                 for sid in list(tracer._span_stack):
                     tracer.end_span(sid)
                 finished = list(tracer._spans.values())
+                _sys.stderr.write(f'[trace-debug] finally: finished={len(finished)}\n')
                 if finished:
                     self._tracing_api.store.write_spans(finished)
+                _sys.stderr.write(f'[trace-debug] finally: wrote {len(finished)} spans\n')
 
         # ── 检查是否有 interrupt（如 shell 确认）──
         try:
