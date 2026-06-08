@@ -116,3 +116,34 @@ class TestTraceStore:
         store.cleanup(retention_days=30)
         assert store.count() == 1
         assert store.get_trace_spans("new")
+
+
+from src.tracing.tracer import Tracer
+
+
+class TestTracer:
+    def test_start_and_end_span(self):
+        t = Tracer(session_id="s1", session_turn=1)
+        span_id = t.start_span(span_type="llm_call")
+        assert span_id
+        span = t._spans[span_id]
+        assert span.span_type == "llm_call"
+        t.end_span(span_id)
+        assert t._spans[span_id].ended_at
+        assert t._spans[span_id].duration_ms >= 0
+
+    def test_parent_child(self):
+        t = Tracer(session_id="s1", session_turn=1)
+        parent_id = t.start_span(span_type="session_turn", user_message="hello")
+        child_id = t.start_span(span_type="llm_call")
+        t.end_span(child_id)
+        t.end_span(parent_id)
+        assert t._spans[child_id].parent_span_id == parent_id
+
+    def test_finished_spans(self):
+        t = Tracer(session_id="s1", session_turn=1)
+        sid = t.start_span(span_type="llm_call")
+        t.end_span(sid)
+        finished = t.finished_spans
+        assert len(finished) == 1
+        assert finished[0].span_id == sid
