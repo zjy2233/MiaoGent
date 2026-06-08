@@ -1,6 +1,6 @@
-"""Api 单元测试 — pywebview 后端桥接层。
+"""Api 单元测试 — HTTP API 桥接层。
 
-不启动 webview 窗口；只验证 Api 实例的方法能正确读写磁盘文件。
+不启动 HTTP 服务器；只验证 Api 实例的方法能正确读写磁盘文件。
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from src.agent_shell import Api, _parse_tool_files, _SETTINGS_KEY_TO_ENV
+from frontend.bridge import Api, _parse_tool_files, _SETTINGS_KEY_TO_ENV
 
 
 class TestApiSessions:
@@ -21,8 +21,9 @@ class TestApiSessions:
         assert api.get_sessions() == []
 
     def test_delete_session_removes_entry(self, tmp_path: Path) -> None:
-        # 预置一条会话
-        sessions_file = tmp_path / ".sessions.json"
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        sessions_file = data_dir / ".sessions.json"
         sessions_file.write_text(
             json.dumps(
                 {
@@ -54,7 +55,6 @@ class TestApiSettings:
     """get_settings / save_settings。"""
 
     def test_get_settings_returns_defaults(self, tmp_path: Path, monkeypatch) -> None:
-        # 清空相关环境变量，让 Api 读出 dataclass 默认值
         for env_name in _SETTINGS_KEY_TO_ENV.values():
             monkeypatch.delenv(env_name, raising=False)
 
@@ -83,7 +83,6 @@ class TestApiSettings:
         }
         api.save_settings(new_settings)
 
-        # 重新实例化，验证磁盘上的 .env 写对了
         api2 = Api(root_dir=tmp_path)
         reloaded = api2.get_settings()
         assert reloaded["deepseek_api_key"] == "sk-test-123"
@@ -119,6 +118,8 @@ class TestApiSoul:
         assert api.get_soul() == {"version": 1, "description": ""}
 
     def test_save_and_get_soul(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
         api = Api(root_dir=tmp_path)
         api.save_soul({"version": 1, "description": "温柔、简洁"})
         assert api.get_soul() == {"version": 1, "description": "温柔、简洁"}
@@ -132,20 +133,17 @@ class TestApiProfile:
         assert api.get_profile() == {"version": 1}
 
     def test_save_and_get_profile(self, tmp_path: Path) -> None:
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
         api = Api(root_dir=tmp_path)
         api.save_profile({"version": 1, "name": "张三", "city": "北京"})
-        assert api.get_profile() == {
-            "version": 1,
-            "name": "张三",
-            "city": "北京",
-        }
+        assert api.get_profile() == {"version": 1, "name": "张三", "city": "北京"}
 
 
 class TestApiTools:
     """get_tools — AST 解析 src/tools/*.py 中的 @tool 装饰器。"""
 
     def test_parse_tool_files_finds_known_tools(self, tmp_path: Path) -> None:
-        # 在临时目录里模拟 src/tools/ 结构
         tools_dir = tmp_path / "tools"
         tools_dir.mkdir()
         (tools_dir / "calc.py").write_text(
@@ -168,7 +166,6 @@ class TestApiTools:
             "    return 'now'\n",
             encoding="utf-8",
         )
-        # 不应被识别为 @tool
         (tools_dir / "helper.py").write_text(
             "def helper() -> str:\n"
             '    """不是 @tool。"""\n'
@@ -216,7 +213,6 @@ class TestApiTools:
             encoding="utf-8",
         )
         tools = _parse_tool_files(tools_dir)
-        # 只识别 attr == "tool"，别名后不会匹配
         assert all(t["name"] != "bar" for t in tools)
 
     def test_parse_tool_files_empty_dir(self, tmp_path: Path) -> None:
@@ -225,15 +221,10 @@ class TestApiTools:
         assert _parse_tool_files(tools_dir) == []
 
     def test_parse_tool_files_missing_dir(self, tmp_path: Path) -> None:
-        # 目录不存在应当返回空列表而不是抛错
         assert _parse_tool_files(tmp_path / "nope") == []
 
     def test_get_tools_uses_real_src_tools(self, tmp_path: Path, monkeypatch) -> None:
-        """默认情况下，Api 应该从项目真实 src/tools/ 里枚举工具。"""
-        # 阻止 _parse_tool_files 走项目根的 tools 目录，转到 tmp
-        # 简单做法：直接 patch Api 的 _tools_dir
         api = Api(root_dir=tmp_path)
-        # 构造一个最小的 tools 目录
         (tmp_path / "src" / "tools").mkdir(parents=True)
         (tmp_path / "src" / "tools" / "demo.py").write_text(
             "from langchain_core.tools import tool\n"

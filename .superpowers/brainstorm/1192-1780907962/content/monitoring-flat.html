@@ -1,0 +1,373 @@
+<style>
+  body { background: #1a1a2e !important; }
+  * { box-sizing: border-box; }
+  .panel { background: #242438; border: 1px solid #3a3a52; border-radius: 10px; padding: 14px; }
+  .panel-title { font-size: 10px; color: #8888aa; letter-spacing: 0.3px; margin-bottom: 4px; }
+  .panel-value { font-size: 22px; font-weight: 700; color: #fff; }
+  .badge { font-size: 10px; padding: 2px 8px; border-radius: 4px; }
+  .badge-success { background: #1a3a2a; color: #4ade80; border: 1px solid #2a5a3a; }
+  .badge-danger { background: #3a1a1a; color: #f87171; border: 1px solid #5a2a2a; }
+  .badge-info { background: #1a1a3a; color: #74b9ff; border: 1px solid #2a2a5a; }
+  .row-item { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; background: #1e1e34; border: 1px solid #2e2e48; cursor: pointer; }
+  .row-item:hover { background: #2a2a42; }
+  .tab { padding: 5px 16px; border-radius: 8px; font-size: 12px; font-weight: 500; cursor: pointer; }
+  .tab-active { background: #6c5ce7; color: #fff; font-weight: 600; }
+  .tab-inactive { background: #2a2a42; color: #8888bb; }
+  .bar-bg { background: #2a2a42; }
+  .bar-fill { background: #6c5ce7; border-radius: 3px 3px 0 0; }
+  .mono { font-family: Menlo, Monaco, Consolas, monospace; }
+  .link { color: #a29bfe; font-size: 12px; cursor: pointer; font-weight: 600; }
+  .link:hover { color: #c4b8ff; }
+  .stat-box { background: #1e1e34; border: 1px solid #2e2e48; border-radius: 8px; padding: 8px 12px; }
+  .vline { width: 0; height: 14px; border-left: 1px solid #3a3a52; margin: 0 6px; }
+  .trace-indent { margin-left: 28px; padding-left: 12px; border-left: 2px solid #3a3a52; }
+  .span-item { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 8px; cursor: pointer; }
+  .span-session { background: #2a1a3a; border: 1px solid #4a2a6a; }
+  .span-llm { background: #0a1a3a; border: 1px solid #1a3a6a; }
+  .span-step { background: #0a2a2a; border: 1px solid #1a4a4a; }
+  .span-tool { background: #2a2a1a; border: 1px solid #4a4a1a; }
+</style>
+
+<!-- ======================== TAB NAV ======================== -->
+<div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
+  <span id="tab-overview" class="tab tab-active" onclick="switchTab('overview')">总览</span>
+  <span id="tab-traces" class="tab tab-inactive" onclick="switchTab('traces')">Trace</span>
+  <span id="tab-tokens" class="tab tab-inactive" onclick="switchTab('tokens')">Token</span>
+  <span id="tab-latency" class="tab tab-inactive" onclick="switchTab('latency')">延迟</span>
+  <span style="flex:1;"></span>
+  <span style="font-size:11px;color:#8888aa;">监控</span>
+</div>
+
+<!-- ======================== OVERVIEW TAB ======================== -->
+<div id="view-overview">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
+    <div class="panel">
+      <div class="panel-title">今日 Token</div>
+      <div class="panel-value">142.5K</div>
+      <div style="color:#4ade80;font-size:11px;margin-top:2px;">较昨日 +12%</div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">平均延迟</div>
+      <div class="panel-value">1.8s</div>
+      <div style="color:#4ade80;font-size:11px;margin-top:2px;">较昨日 -14%</div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">今日调用</div>
+      <div class="panel-value">89</div>
+      <div style="color:#8888aa;font-size:11px;margin-top:2px;">较昨日 +6%</div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">错误率</div>
+      <div class="panel-value">3.2%</div>
+      <div style="color:#f87171;font-size:11px;margin-top:2px;">较昨日 +52%</div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-bottom:16px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <span style="font-size:13px;font-weight:600;color:#ddd;">Token 消耗趋势</span>
+      <span style="font-size:11px;color:#8888aa;">过去 12 小时</span>
+    </div>
+    <div style="display:flex;align-items:flex-end;height:80px;gap:5px;">
+      <div class="bar-bg" style="flex:1;border-radius:3px 3px 0 0;"><div class="bar-fill" style="height:30%;width:100%;"></div></div>
+      <div class="bar-bg" style="flex:1;border-radius:3px 3px 0 0;"><div class="bar-fill" style="height:45%;width:100%;"></div></div>
+      <div class="bar-bg" style="flex:1;border-radius:3px 3px 0 0;"><div class="bar-fill" style="height:25%;width:100%;"></div></div>
+      <div class="bar-bg" style="flex:1;border-radius:3px 3px 0 0;"><div class="bar-fill" style="height:55%;width:100%;"></div></div>
+      <div class="bar-bg" style="flex:1;border-radius:3px 3px 0 0;"><div class="bar-fill" style="height:35%;width:100%;"></div></div>
+      <div class="bar-bg" style="flex:1;border-radius:3px 3px 0 0;"><div class="bar-fill" style="height:70%;width:100%;"></div></div>
+      <div class="bar-bg" style="flex:1;border-radius:3px 3px 0 0;"><div class="bar-fill" style="height:50%;width:100%;"></div></div>
+      <div class="bar-bg" style="flex:1;border-radius:3px 3px 0 0;"><div class="bar-fill" style="height:75%;width:100%;"></div></div>
+      <div class="bar-bg" style="flex:1;border-radius:3px 3px 0 0;"><div class="bar-fill" style="height:40%;width:100%;"></div></div>
+      <div class="bar-bg" style="flex:1;border-radius:3px 3px 0 0;"><div class="bar-fill" style="height:60%;width:100%;"></div></div>
+      <div class="bar-bg" style="flex:1;border-radius:3px 3px 0 0;"><div class="bar-fill" style="height:28%;width:100%;"></div></div>
+      <div class="bar-bg" style="flex:1;border-radius:3px 3px 0 0;"><div class="bar-fill" style="height:52%;width:100%;"></div></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+      <span style="font-size:13px;font-weight:600;color:#ddd;">近期 Trace</span>
+      <span class="link" onclick="switchTab('traces')">查看全部</span>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      <div class="row-item">
+        <span style="width:8px;height:8px;border-radius:50%;background:#4ade80;flex-shrink:0;"></span>
+        <span class="mono" style="font-size:11px;color:#aaa;flex:1;">a1b2c3d4</span>
+        <span style="font-size:11px;color:#888;">14:32</span>
+        <span style="font-size:11px;color:#aaa;">8.3K</span>
+        <span style="font-size:11px;color:#888;">3.2s</span>
+        <span style="font-size:11px;color:#888;flex:none;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">查询最新AI新闻</span>
+        <span class="badge badge-success">完成</span>
+      </div>
+      <div class="row-item">
+        <span style="width:8px;height:8px;border-radius:50%;background:#f87171;flex-shrink:0;"></span>
+        <span class="mono" style="font-size:11px;color:#aaa;flex:1;">e5f6g7h8</span>
+        <span style="font-size:11px;color:#888;">14:15</span>
+        <span style="font-size:11px;color:#aaa;">12.9K</span>
+        <span style="font-size:11px;color:#888;">5.7s</span>
+        <span style="font-size:11px;color:#888;flex:none;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">写Python爬虫脚本</span>
+        <span class="badge badge-danger">失败</span>
+      </div>
+      <div class="row-item">
+        <span style="width:8px;height:8px;border-radius:50%;background:#4ade80;flex-shrink:0;"></span>
+        <span class="mono" style="font-size:11px;color:#aaa;flex:1;">i9j0k1l2</span>
+        <span style="font-size:11px;color:#888;">14:02</span>
+        <span style="font-size:11px;color:#aaa;">3.2K</span>
+        <span style="font-size:11px;color:#888;">0.9s</span>
+        <span style="font-size:11px;color:#888;flex:none;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">今天天气怎么样</span>
+        <span class="badge badge-success">完成</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======================== TRACES TAB ======================== -->
+<div id="view-traces" style="display:none;">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+    <span style="flex:1;"></span>
+    <span style="font-size:11px;color:#8888aa;">共 24 条记录</span>
+  </div>
+
+  <div class="panel" style="margin-bottom:12px;">
+    <div style="display:flex;gap:8px;margin-bottom:12px;">
+      <input placeholder="搜索会话内容或 Trace ID..." style="flex:1;padding:8px 12px;border:1px solid #3a3a52;border-radius:8px;background:#1a1a2e;color:#ccc;font-size:12px;outline:none;">
+      <select style="padding:8px 12px;border:1px solid #3a3a52;border-radius:8px;background:#1a1a2e;color:#ccc;font-size:12px;outline:none;">
+        <option>全部状态</option>
+        <option>成功</option>
+        <option>失败</option>
+      </select>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:8px;">
+      <div class="row-item" onclick="switchTab('detail')">
+        <span style="width:8px;height:8px;border-radius:50%;background:#4ade80;flex-shrink:0;"></span>
+        <span class="mono" style="font-size:11px;color:#aaa;flex-shrink:0;width:70px;">a1b2c3d4</span>
+        <span style="font-size:11px;color:#888;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">查询最新AI新闻和行业动态</span>
+        <span style="font-size:11px;color:#888;">14:32</span>
+        <span style="font-size:11px;color:#aaa;">8,342</span>
+        <span style="font-size:11px;color:#888;">3.2s</span>
+        <span class="badge badge-success">完成</span>
+      </div>
+      <div class="row-item">
+        <span style="width:8px;height:8px;border-radius:50%;background:#f87171;flex-shrink:0;"></span>
+        <span class="mono" style="font-size:11px;color:#aaa;flex-shrink:0;width:70px;">e5f6g7h8</span>
+        <span style="font-size:11px;color:#888;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">帮我写一个Python爬虫脚本</span>
+        <span style="font-size:11px;color:#888;">14:15</span>
+        <span style="font-size:11px;color:#aaa;">12,891</span>
+        <span style="font-size:11px;color:#888;">5.7s</span>
+        <span class="badge badge-danger">失败</span>
+      </div>
+      <div class="row-item">
+        <span style="width:8px;height:8px;border-radius:50%;background:#4ade80;flex-shrink:0;"></span>
+        <span class="mono" style="font-size:11px;color:#aaa;flex-shrink:0;width:70px;">i9j0k1l2</span>
+        <span style="font-size:11px;color:#888;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">今天天气怎么样</span>
+        <span style="font-size:11px;color:#888;">14:02</span>
+        <span style="font-size:11px;color:#aaa;">3,156</span>
+        <span style="font-size:11px;color:#888;">0.9s</span>
+        <span class="badge badge-success">完成</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======================== TRACE DETAIL SUB-VIEW ======================== -->
+<div id="view-detail" style="display:none;">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+    <span class="link" onclick="switchTab('traces')">&lt; 返回列表</span>
+  </div>
+
+  <div style="font-size:12px;color:#8888aa;margin-bottom:12px;">
+    <span class="mono" style="background:#2a2a42;padding:2px 8px;border-radius:4px;">a1b2c3d4</span>
+    <span style="color:#555;margin:0 8px;">|</span>14:32:18
+    <span style="color:#555;margin:0 8px;">|</span><span style="color:#a29bfe;">8,342 Token</span>
+    <span style="color:#555;margin:0 8px;">|</span>3.2秒
+  </div>
+
+  <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px;">
+    <div class="stat-box"><div class="panel-title">输入 Token</div><div class="panel-value" style="font-size:17px;color:#a29bfe;">5,210</div></div>
+    <div class="stat-box"><div class="panel-title">输出 Token</div><div class="panel-value" style="font-size:17px;color:#74b9ff;">3,132</div></div>
+    <div class="stat-box"><div class="panel-title">总耗时</div><div class="panel-value" style="font-size:17px;">3.2秒</div></div>
+    <div class="stat-box"><div class="panel-title">工具数</div><div class="panel-value" style="font-size:17px;">4</div></div>
+  </div>
+
+  <div style="display:flex;gap:14px;margin-bottom:12px;font-size:11px;color:#888;">
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#4a2a6a;vertical-align:middle;margin-right:4px;"></span> 会话</span>
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#1a3a6a;vertical-align:middle;margin-right:4px;"></span> LLM</span>
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#1a4a4a;vertical-align:middle;margin-right:4px;"></span> Agent</span>
+    <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#4a4a1a;vertical-align:middle;margin-right:4px;"></span> 工具</span>
+  </div>
+
+  <div class="span-item span-session">
+    <span style="color:#a29bfe;font-size:13px;">--</span>
+    <span style="font-size:13px;font-weight:600;color:#ddd;flex:1;">用户会话</span>
+    <span class="mono" style="font-size:10px;color:#666;">3.2秒</span>
+    <span class="badge badge-success">成功</span>
+  </div>
+
+  <div class="trace-indent">
+    <div class="span-item span-llm" style="margin-top:6px;">
+      <span style="color:#74b9ff;font-size:12px;">&gt;</span>
+      <span style="font-size:12px;color:#ccc;flex:1;">LLM: deepseek-chat</span>
+      <span class="mono" style="font-size:10px;color:#888;">4,210+2,892t</span>
+      <span class="mono" style="font-size:10px;color:#666;">1.8秒</span>
+      <span class="badge badge-success">成功</span>
+    </div>
+
+    <div style="margin-top:6px;">
+      <div class="span-item span-step">
+        <span style="color:#2dd4bf;font-size:12px;">-</span>
+        <span style="font-size:12px;color:#ccc;flex:1;">Agent 步骤 1 - 搜索信息</span>
+        <span class="mono" style="font-size:10px;color:#666;">0.5秒</span>
+        <span class="badge badge-success">成功</span>
+      </div>
+      <div style="margin-left:24px;padding-left:10px;border-left:2px solid #3a3a52;">
+        <div class="span-item span-tool" style="margin-top:6px;">
+          <span style="color:#fbbf24;font-size:11px;">*</span>
+          <span style="font-size:12px;color:#ccc;flex:1;">search("最新AI新闻")</span>
+          <span class="mono" style="font-size:10px;color:#666;">0.3秒</span>
+          <span class="badge badge-success">成功</span>
+        </div>
+      </div>
+    </div>
+
+    <div style="margin-top:6px;">
+      <div class="span-item span-step">
+        <span style="color:#2dd4bf;font-size:12px;">-</span>
+        <span style="font-size:12px;color:#ccc;flex:1;">Agent 步骤 2 - 总结结果</span>
+        <span class="mono" style="font-size:10px;color:#666;">0.9秒</span>
+        <span class="badge badge-success">成功</span>
+      </div>
+      <div style="margin-left:24px;padding-left:10px;border-left:2px solid #3a3a52;">
+        <div class="span-item span-llm" style="margin-top:6px;">
+          <span style="color:#74b9ff;font-size:11px;">&gt;</span>
+          <span style="font-size:12px;color:#ccc;flex:1;">LLM: deepseek-chat</span>
+          <span class="mono" style="font-size:10px;color:#888;">1,000+240t</span>
+          <span class="mono" style="font-size:10px;color:#666;">0.7秒</span>
+          <span class="badge badge-success">成功</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:16px;">
+    <div style="display:grid;grid-template-columns:70px 1fr;gap:6px 16px;font-size:12px;">
+      <span style="color:#8888aa;">Trace ID</span>
+      <span class="mono" style="color:#ccc;">a1b2c3d4-e5f6-7890-abcd-ef1234567890</span>
+      <span style="color:#8888aa;">模型</span>
+      <span style="color:#ccc;">deepseek-chat</span>
+      <span style="color:#8888aa;">总耗时</span>
+      <span style="color:#ccc;">3,247 毫秒</span>
+      <span style="color:#8888aa;">总 Token</span>
+      <span style="color:#ccc;">8,342（输入 5,210 + 输出 3,132）</span>
+    </div>
+  </div>
+</div>
+
+<!-- ======================== TOKEN TAB ======================== -->
+<div id="view-tokens" style="display:none;">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+    <span class="link" onclick="switchTab('overview')">&lt; 返回总览</span>
+  </div>
+
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
+    <div class="panel">
+      <div class="panel-title">累计输入 Token</div>
+      <div class="panel-value" style="font-size:20px;color:#a29bfe;">89.2K</div>
+      <div style="font-size:11px;color:#8888aa;margin-top:2px;">占比 62.6%</div>
+    </div>
+    <div class="panel">
+      <div class="panel-title">累计输出 Token</div>
+      <div class="panel-value" style="font-size:20px;color:#74b9ff;">53.3K</div>
+      <div style="font-size:11px;color:#8888aa;margin-top:2px;">占比 37.4%</div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div style="font-size:13px;font-weight:600;color:#ddd;margin-bottom:12px;">Token 分布（按会话）</div>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px;">
+          <span class="mono" style="color:#aaa;">a1b2c3d4</span>
+          <span style="color:#888;">8,342 Token</span>
+        </div>
+        <div style="background:#2a2a42;border-radius:4px;height:8px;">
+          <div style="background:linear-gradient(90deg,#a29bfe,#74b9ff);border-radius:4px;height:8px;width:35%;"></div>
+        </div>
+      </div>
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px;">
+          <span class="mono" style="color:#aaa;">e5f6g7h8</span>
+          <span style="color:#888;">12,891 Token</span>
+        </div>
+        <div style="background:#2a2a42;border-radius:4px;height:8px;">
+          <div style="background:linear-gradient(90deg,#a29bfe,#74b9ff);border-radius:4px;height:8px;width:54%;"></div>
+        </div>
+      </div>
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px;">
+          <span class="mono" style="color:#aaa;">i9j0k1l2</span>
+          <span style="color:#888;">3,156 Token</span>
+        </div>
+        <div style="background:#2a2a42;border-radius:4px;height:8px;">
+          <div style="background:linear-gradient(90deg,#a29bfe,#74b9ff);border-radius:4px;height:8px;width:13%;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ======================== LATENCY TAB ======================== -->
+<div id="view-latency" style="display:none;">
+  <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+    <span class="link" onclick="switchTab('overview')">&lt; 返回总览</span>
+  </div>
+  <div class="panel">
+    <div style="font-size:13px;font-weight:600;color:#ddd;margin-bottom:12px;">工具调用延迟分布</div>
+    <div style="display:flex;flex-direction:column;gap:10px;">
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px;">
+          <span style="color:#aaa;">search</span>
+          <span style="color:#888;">平均 0.8s / 12 次</span>
+        </div>
+        <div style="background:#2a2a42;border-radius:4px;height:8px;">
+          <div style="background:#fbbf24;border-radius:4px;height:8px;width:40%;"></div>
+        </div>
+      </div>
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px;">
+          <span style="color:#aaa;">shell</span>
+          <span style="color:#888;">平均 1.2s / 8 次</span>
+        </div>
+        <div style="background:#2a2a42;border-radius:4px;height:8px;">
+          <div style="background:#fbbf24;border-radius:4px;height:8px;width:60%;"></div>
+        </div>
+      </div>
+      <div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px;">
+          <span style="color:#aaa;">web_fetch</span>
+          <span style="color:#888;">平均 2.1s / 5 次</span>
+        </div>
+        <div style="background:#2a2a42;border-radius:4px;height:8px;">
+          <div style="background:#fbbf24;border-radius:4px;height:8px;width:85%;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function switchTab(tab) {
+  var views = ['overview', 'traces', 'detail', 'tokens', 'latency'];
+  var tabs = ['overview', 'traces', 'tokens', 'latency'];
+  views.forEach(function(v) {
+    var el = document.getElementById('view-' + v);
+    if (el) el.style.display = (v === tab || (tab === 'detail' && v === 'detail')) ? 'block' : 'none';
+    if (v === 'traces' && tab === 'detail') document.getElementById('view-traces').style.display = 'none';
+  });
+  tabs.forEach(function(t) {
+    var el = document.getElementById('tab-' + t);
+    if (el) {
+      el.className = 'tab ' + (t === tab ? 'tab-active' : 'tab-inactive');
+    }
+  });
+}
+</script>

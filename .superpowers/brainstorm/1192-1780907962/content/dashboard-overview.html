@@ -1,0 +1,105 @@
+
+<h2>监控面板 — 首页总览</h2>
+<p class="subtitle">会话级别汇总数据，方便快速了解系统运行状况</p>
+
+<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin:24px 0;">
+  <div style="background:linear-gradient(135deg,#667eea,#764ba2);padding:20px;border-radius:12px;color:#fff;">
+    <div style="font-size:13px;opacity:.8;">今日会话</div>
+    <div style="font-size:32px;font-weight:700;margin:4px 0;">24</div>
+    <div style="font-size:12px;opacity:.6;">较昨日 +12%</div>
+  </div>
+  <div style="background:linear-gradient(135deg,#f093fb,#f5576c);padding:20px;border-radius:12px;color:#fff;">
+    <div style="font-size:13px;opacity:.8;">Token 消耗</div>
+    <div style="font-size:32px;font-weight:700;margin:4px 0;">142.5K</div>
+    <div style="font-size:12px;opacity:.6;">今日累计，≈ ¥2.85</div>
+  </div>
+  <div style="background:linear-gradient(135deg,#4facfe,#00f2fe);padding:20px;border-radius:12px;color:#fff;">
+    <div style="font-size:13px;opacity:.8;">平均延迟</div>
+    <div style="font-size:32px;font-weight:700;margin:4px 0;">1.8s</div>
+    <div style="font-size:12px;opacity:.6;">较昨日 -0.3s</div>
+  </div>
+  <div style="background:linear-gradient(135deg,#43e97b,#38f9d7);padding:20px;border-radius:12px;color:#222;">
+    <div style="font-size:13px;opacity:.7;">工具调用</div>
+    <div style="font-size:32px;font-weight:700;margin:4px 0;">89</div>
+    <div style="font-size:12px;opacity:.6;">较昨日 +5</div>
+  </div>
+</div>
+
+<h3 style="margin-top:32px;">今日 Token 趋势</h3>
+<div class="mockup" style="margin:12px 0;">
+  <div class="mockup-header">Token 消耗曲线（过去 12 小时）</div>
+  <div class="mockup-body" style="padding:20px;">
+    <div style="display:flex;align-items:flex-end;height:120px;gap:8px;">
+      <div style="flex:1;background:#667eea;border-radius:4px 4px 0 0;height:40%;min-width:20px;"></div>
+      <div style="flex:1;background:#667eea;border-radius:4px 4px 0 0;height:55%;min-width:20px;"></div>
+      <div style="flex:1;background:#667eea;border-radius:4px 4px 0 0;height:30%;min-width:20px;"></div>
+      <div style="flex:1;background:#667eea;border-radius:4px 4px 0 0;height:70%;min-width:20px;"></div>
+      <div style="flex:1;background:#667eea;border-radius:4px 4px 0 0;height:45%;min-width:20px;"></div>
+      <div style="flex:1;background:#667eea;border-radius:4px 4px 0 0;height:85%;min-width:20px;"></div>
+      <div style="flex:1;background:#667eea;border-radius:4px 4px 0 0;height:60%;min-width:20px;"></div>
+      <div style="flex:1;background:#667eea;border-radius:4px 4px 0 0;height:95%;min-width:20px;"></div>
+      <div style="flex:1;background:#667eea;border-radius:4px 4px 0 0;height:50%;min-width:20px;"></div>
+      <div style="flex:1;background:#667eea;border-radius:4px 4px 0 0;height:75%;min-width:20px;"></div>
+      <div style="flex:1;background:#667eea;border-radius:4px 4px 0 0;height:35%;min-width:20px;"></div>
+      <div style="flex:1;background:#667eea;border-radius:4px 4px 0 0;height:65%;min-width:20px;"></div>
+    </div>
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <div style="flex:1;font-size:11px;color:#888;text-align:center;">06:00</div>
+      <div style="flex:1;font-size:11px;color:#888;text-align:center;">08:00</div>
+      <div style="flex:1;font-size:11px;color:#888;text-align:center;">10:00</div>
+      <div style="flex:1;font-size:11px;color:#888;text-align:center;">12:00</div>
+      <div style="flex:1;font-size:11px;color:#888;text-align:center;">14:00</div>
+      <div style="flex:1;font-size:11px;color:#888;text-align:center;">16:00</div>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top:32px;">近期 Trace</h3>
+<table style="width:100%;border-collapse:collapse;font-size:14px;">
+  <thead>
+    <tr style="border-bottom:2px solid #eee;">
+      <th style="text-align:left;padding:8px;color:#888;">会话</th>
+      <th style="text-align:left;padding:8px;color:#888;">时间</th>
+      <th style="text-align:left;padding:8px;color:#888;">Token</th>
+      <th style="text-align:left;padding:8px;color:#888;">耗时</th>
+      <th style="text-align:left;padding:8px;color:#888;">工具数</th>
+      <th style="text-align:left;padding:8px;color:#888;">状态</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr style="border-bottom:1px solid #f0f0f0;">
+      <td style="padding:8px;font-family:monospace;font-size:12px;">a1b2c3d4</td>
+      <td style="padding:8px;">14:32:18</td>
+      <td style="padding:8px;">8,342</td>
+      <td style="padding:8px;">3.2s</td>
+      <td style="padding:8px;">4</td>
+      <td style="padding:8px;"><span style="background:#43e97b33;color:#2d7a3e;padding:2px 8px;border-radius:4px;font-size:12px;">✓ 完成</span></td>
+    </tr>
+    <tr style="border-bottom:1px solid #f0f0f0;">
+      <td style="padding:8px;font-family:monospace;font-size:12px;">e5f6g7h8</td>
+      <td style="padding:8px;">14:15:42</td>
+      <td style="padding:8px;">12,891</td>
+      <td style="padding:8px;">5.7s</td>
+      <td style="padding:8px;">7</td>
+      <td style="padding:8px;"><span style="background:#f5576c33;color:#c0392b;padding:2px 8px;border-radius:4px;font-size:12px;">✗ 错误</span></td>
+    </tr>
+    <tr>
+      <td style="padding:8px;font-family:monospace;font-size:12px;">i9j0k1l2</td>
+      <td style="padding:8px;">14:02:05</td>
+      <td style="padding:8px;">3,156</td>
+      <td style="padding:8px;">0.9s</td>
+      <td style="padding:8px;">1</td>
+      <td style="padding:8px;"><span style="background:#43e97b33;color:#2d7a3e;padding:2px 8px;border-radius:4px;font-size:12px;">✓ 完成</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="section" style="margin-top:32px;">
+  <h3>后续页面</h3>
+  <div style="display:flex;gap:12px;">
+    <span class="label">Trace 详情</span>
+    <span class="label" style="background:#667eea;color:#fff;">链路树 + span 明细</span>
+    <span class="label" style="background:#f093fb;color:#fff;">Token 分析</span>
+    <span class="label" style="background:#4facfe;color:#fff;">延迟分析</span>
+  </div>
+</div>

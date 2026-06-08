@@ -1,5 +1,5 @@
 import pytest
-from src.tools.shell_patterns import CommandClassifier, DangerLevel, classify
+from src.tools.shell.patterns import CommandClassifier, DangerLevel, classify
 
 
 class TestCommandClassifier:

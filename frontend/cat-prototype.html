@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>猫猫动作原型</title>
+<script src="assets/lottie-player.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: linear-gradient(145deg, #1e1e32, #141428);
+  color: #fff;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px 20px 60px;
+}
+h1 { font-size: 26px; font-weight: 600; background: linear-gradient(135deg, #a29bfe, #74b9ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+.subtitle { font-size: 14px; color: rgba(255,255,255,0.4); margin: 8px 0 36px; }
+
+.preview-area {
+  margin: 20px 0 32px;
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+}
+.preview-ball {
+  width: 200px; height: 200px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.06);
+  display: flex; align-items: center; justify-content: center;
+  position: relative; overflow: visible;
+  transition: border-color 0.4s;
+}
+#mascot-player {
+  width: 160px; height: 160px;
+  position: relative; z-index: 2;
+  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.overlay-container { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+
+/* ── ====== 动作特效样式 ====== ── */
+
+/* ── 1. WAVE 挥手 ── */
+.preview-ball.wave { border-color: rgba(162,155,254,0.3); }
+.preview-ball.wave #mascot-player {
+  animation: wave-body 0.8s ease-in-out infinite;
+  transform-origin: center 70%;
+}
+@keyframes wave-body {
+  0%, 100% { transform: rotate(-6deg) scale(1.03); }
+  50% { transform: rotate(10deg) scale(1.06); }
+}
+.wave-emojis { position: absolute; font-size: 30px; z-index: 4; pointer-events: none; }
+.wave-emojis:nth-child(2) { top: 20px; right: -5px; animation: wave-toss 1.2s ease-out infinite; }
+.wave-emojis:nth-child(3) { top: -8px; right: 25px; font-size: 14px; animation: wave-toss 1.2s ease-out infinite 0.4s; opacity: 0.6; }
+@keyframes wave-toss {
+  0% { transform: translateY(0) rotate(0deg); opacity: 0; }
+  20% { opacity: 1; }
+  100% { transform: translateY(-30px) rotate(30deg); opacity: 0; }
+}
+
+/* ── 2. THINK 思考 ── */
+.preview-ball.think { border-color: rgba(253,203,110,0.25); }
+.preview-ball.think #mascot-player {
+  animation: think-bob 2s ease-in-out infinite;
+  transform-origin: bottom center;
+}
+@keyframes think-bob {
+  0%, 100% { transform: translateY(0) rotate(-3deg); }
+  50% { transform: translateY(-4px) rotate(-1deg); }
+}
+.think-particle {
+  position: absolute; z-index: 4; pointer-events: none;
+  font-weight: bold; animation: think-float 2.2s ease-out infinite;
+}
+@keyframes think-float {
+  0% { transform: translateY(0) scale(0.4); opacity: 0; }
+  25% { opacity: 1; }
+  100% { transform: translateY(-55px) scale(1.3); opacity: 0; }
+}
+.think-ring {
+  position: absolute; border-radius: 50%; border: 1px solid; z-index: 1; pointer-events: none;
+  animation: think-ring-pulse 2s ease-out infinite;
+}
+.think-ring:nth-child(2) { width: 60px; height: 60px; border-color: rgba(253,203,110,0.15); }
+.think-ring:nth-child(3) { width: 100px; height: 100px; border-color: rgba(162,155,254,0.1); animation-delay: 0.5s; }
+.think-ring:nth-child(4) { width: 140px; height: 140px; border-color: rgba(116,185,255,0.07); animation-delay: 1s; }
+@keyframes think-ring-pulse {
+  0% { transform: scale(0.3); opacity: 0.5; }
+  100% { transform: scale(1.2); opacity: 0; }
+}
+
+/* ── 3. SLEEP 睡觉 ── */
+.preview-ball.sleep { border-color: rgba(162,155,254,0.2); }
+.preview-ball.sleep #mascot-player {
+  animation: sleep-breathe 3s ease-in-out infinite;
+  filter: brightness(0.65) saturate(0.5);
+  transform-origin: center 80%;
+}
+@keyframes sleep-breathe {
+  0%, 100% { transform: scale(0.92) translateY(6px); }
+  50% { transform: scale(0.96) translateY(4px); }
+}
+.sleep-z {
+  position: absolute; z-index: 4; pointer-events: none;
+  font-weight: bold; color: #a29bfe;
+}
+.sleep-z:nth-child(2) { top: 12px; right: 14px; font-size: 30px; animation: sleep-zzz 2.6s ease-out infinite; }
+.sleep-z:nth-child(3) { top: -2px; right: 32px; font-size: 20px; animation: sleep-zzz 2.6s ease-out infinite 0.8s; color: #74b9ff; }
+.sleep-z:nth-child(4) { top: -14px; right: 48px; font-size: 14px; animation: sleep-zzz 2.6s ease-out infinite 1.6s; }
+@keyframes sleep-zzz {
+  0% { transform: translateY(0) translateX(0) scale(0.5); opacity: 0; }
+  25% { opacity: 1; }
+  100% { transform: translateY(-45px) translateX(20px) scale(1.2); opacity: 0; }
+}
+.sleep-moon {
+  position: absolute; top: -8px; left: 8px; z-index: 4; pointer-events: none;
+  font-size: 24px; animation: sleep-glow 2s ease-in-out infinite;
+}
+@keyframes sleep-glow {
+  0%, 100% { opacity: 0.4; transform: scale(0.9); }
+  50% { opacity: 0.8; transform: scale(1.1); }
+}
+
+/* ── 4. HAPPY 开心 ── */
+.preview-ball.happy { border-color: rgba(253,203,110,0.3); }
+.preview-ball.happy #mascot-player {
+  animation: happy-jump 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) infinite;
+}
+@keyframes happy-jump {
+  0%, 100% { transform: translateY(0) scale(1); }
+  30% { transform: translateY(-16px) scale(1.05); }
+  60% { transform: translateY(-6px) scale(1.02); }
+}
+.happy-particle {
+  position: absolute; z-index: 4; pointer-events: none;
+  animation: happy-burst 1.2s ease-out infinite;
+}
+@keyframes happy-burst {
+  0% { transform: scale(0) rotate(0deg); opacity: 0; }
+  30% { opacity: 1; }
+  100% { transform: scale(1.2) rotate(180deg) translateY(-30px); opacity: 0; }
+}
+.happy-confetti {
+  position: absolute; width: 6px; height: 6px; border-radius: 2px; z-index: 4; pointer-events: none;
+  animation: confetti-fall 1.5s ease-in infinite;
+}
+@keyframes confetti-fall {
+  0% { transform: translateY(0) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(80px) rotate(360deg); opacity: 0; }
+}
+
+/* ── 5. LISTEN 聆听 ── */
+.preview-ball.listen { border-color: rgba(116,185,255,0.3); }
+.preview-ball.listen #mascot-player {
+  animation: listen-prickle 1.2s ease-in-out infinite;
+}
+@keyframes listen-prickle {
+  0%, 100% { transform: scale(1.02) rotate(-2deg); }
+  50% { transform: scale(1.06) rotate(2deg); }
+}
+.listen-ring {
+  position: absolute; border-radius: 50%; z-index: 1; pointer-events: none;
+  animation: listen-sonar 1.6s ease-out infinite;
+}
+.listen-ring:nth-child(2) { width: 50px; height: 50px; border: 2px solid rgba(162,155,254,0.3); }
+.listen-ring:nth-child(3) { width: 80px; height: 80px; border: 1.5px solid rgba(116,185,255,0.2); animation-delay: 0.4s; }
+.listen-ring:nth-child(4) { width: 110px; height: 110px; border: 1px solid rgba(162,155,254,0.12); animation-delay: 0.8s; }
+.listen-ring:nth-child(5) { width: 140px; height: 140px; border: 1px solid rgba(116,185,255,0.08); animation-delay: 1.2s; }
+@keyframes listen-sonar {
+  0% { transform: translate(-50%,-50%) scale(0.3); opacity: 0.6; }
+  100% { transform: translate(-50%,-50%) scale(1.8); opacity: 0; }
+}
+.listen-wave {
+  position: absolute; z-index: 4; pointer-events: none;
+  font-size: 24px; animation: listen-bob 0.6s ease-in-out infinite;
+}
+.listen-wave:nth-child(6) { top: 14px; left: 4px; animation-delay: 0s; }
+.listen-wave:nth-child(7) { top: 4px; left: 18px; font-size: 16px; animation-delay: 0.15s; opacity: 0.6; }
+.listen-wave:nth-child(8) { top: -4px; left: 30px; font-size: 10px; animation-delay: 0.3s; opacity: 0.3; }
+@keyframes listen-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-6px); }
+}
+
+/* ── 6. CONFUSE 疑惑 ── */
+.preview-ball.confuse { border-color: rgba(255,118,117,0.25); }
+.preview-ball.confuse #mascot-player {
+  animation: confuse-wobble 0.35s ease-in-out infinite;
+}
+@keyframes confuse-wobble {
+  0% { transform: rotate(-6deg) translateX(0); }
+  25% { transform: rotate(4deg) translateX(4px); }
+  50% { transform: rotate(-4deg) translateX(-2px); }
+  75% { transform: rotate(6deg) translateX(4px); }
+  100% { transform: rotate(-6deg) translateX(0); }
+}
+.confuse-q {
+  position: absolute; z-index: 4; pointer-events: none;
+  font-weight: bold; color: #fdca6e; animation: confuse-pop 1.8s ease-out infinite;
+}
+@keyframes confuse-pop {
+  0% { transform: scale(0) rotate(-20deg); opacity: 0; }
+  30% { opacity: 1; }
+  100% { transform: scale(1.4) rotate(10deg) translateY(-30px); opacity: 0; }
+}
+.confuse-spiral {
+  position: absolute; z-index: 1; pointer-events: none;
+  width: 60px; height: 60px; border-radius: 50%;
+  border: 2px dashed rgba(255,118,117,0.08);
+  animation: confuse-spin 1s linear infinite;
+}
+@keyframes confuse-spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+/* ── 7. EXCITED 兴奋 ── */
+.preview-ball.excited { border-color: rgba(253,203,110,0.35); }
+.preview-ball.excited #mascot-player {
+  animation: excited-shake 0.2s ease-in-out infinite;
+}
+@keyframes excited-shake {
+  0% { transform: rotate(-3deg) scale(1.04) translateX(-1px); }
+  25% { transform: rotate(1deg) scale(1.06) translateX(2px); }
+  50% { transform: rotate(-1deg) scale(1.04) translateX(-2px); }
+  75% { transform: rotate(3deg) scale(1.06) translateX(1px); }
+  100% { transform: rotate(-3deg) scale(1.04) translateX(-1px); }
+}
+.excited-burst {
+  position: absolute; z-index: 4; pointer-events: none;
+  font-size: 18px; animation: excited-explode 0.8s ease-out infinite;
+}
+@keyframes excited-explode {
+  0% { transform: scale(0) rotate(0deg); opacity: 0; }
+  40% { opacity: 1; }
+  100% { transform: scale(1.5) rotate(360deg) translateY(-20px); opacity: 0; }
+}
+.excited-glow {
+  position: absolute; width: 80px; height: 80px; border-radius: 50%; z-index: 1; pointer-events: none;
+  background: radial-gradient(circle, rgba(253,203,110,0.12) 0%, transparent 70%);
+  animation: excited-pulse 0.4s ease-in-out infinite;
+}
+@keyframes excited-pulse {
+  0%, 100% { transform: scale(0.8); opacity: 0.6; }
+  50% { transform: scale(1.2); opacity: 1; }
+}
+
+/* ── 8. CODE 编程 ── */
+.preview-ball.code { border-color: rgba(0,184,148,0.25); }
+.preview-ball.code #mascot-player {
+  animation: code-type 0.25s ease-in-out infinite;
+}
+@keyframes code-type {
+  0%, 100% { transform: translateY(-2px) scale(1.02); }
+  50% { transform: translateY(2px) scale(1); }
+}
+.code-char {
+  position: absolute; z-index: 4; pointer-events: none;
+  font-family: monospace; font-weight: bold;
+  animation: code-rise 1.6s ease-out infinite;
+}
+@keyframes code-rise {
+  0% { transform: translateY(0) scale(0.6); opacity: 0; }
+  25% { opacity: 0.8; }
+  100% { transform: translateY(-40px) scale(1); opacity: 0; }
+}
+.code-beam {
+  position: absolute; width: 2px; height: 20px; z-index: 1; pointer-events: none;
+  background: linear-gradient(to top, transparent, rgba(0,184,148,0.08));
+  animation: code-scan 0.8s linear infinite;
+}
+@keyframes code-scan {
+  0% { transform: translateY(-30px); opacity: 0; }
+  50% { opacity: 1; }
+  100% { transform: translateY(30px); opacity: 0; }
+}
+
+/* ── 按钮 ── */
+.action-btns { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; max-width: 650px; }
+.action-btn {
+  padding: 8px 18px; border-radius: 20px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(255,255,255,0.05);
+  color: rgba(255,255,255,0.6);
+  font-size: 13px; cursor: pointer;
+  transition: all 150ms;
+}
+.action-btn:hover { background: rgba(162,155,254,0.15); border-color: rgba(162,155,254,0.3); color: #fff; }
+.action-btn.active { background: rgba(162,155,254,0.2); border-color: #a29bfe; color: #fff; }
+.preview-name { font-size: 16px; font-weight: 600; color: rgba(255,255,255,0.7); }
+.preview-hint { font-size: 12px; color: rgba(255,255,255,0.3); }
+</style>
+</head>
+<body>
+
+<h1>✦ 猫猫动作集</h1>
+<p class="subtitle">原版帧素材 · CSS 特效 · 粒子系统</p>
+
+<div class="action-btns" id="actionBtns"></div>
+
+<div class="preview-area">
+  <div class="preview-ball" id="previewBall">
+    <lottie-player id="mascot-player" src="assets/mascot.json"
+      background="transparent" speed="1"
+      style="width:160px;height:160px;">
+    </lottie-player>
+    <div id="fxContainer" class="overlay-container"></div>
+  </div>
+  <div class="preview-name" id="previewName">Idle</div>
+  <div class="preview-hint" id="previewHint">选择一个动作</div>
+</div>
+
+<script>
+const actions = [
+  {
+    id: 'idle', name: '😺 Idle',
+    desc: '原始动画循环',
+    activate(p, ball, fx) {
+      p.setSpeed(1); p.setDirection(1); p.play();
+    }
+  },
+  {
+    id: 'wave', name: '👋 Wave',
+    desc: '挥手 + 倾斜 + 爱心飘散',
+    activate(p, ball, fx) {
+      p.setSpeed(1.8); p.setDirection(1); p.play();
+      fx.innerHTML = `
+        <div class="wave-emojis" style="top:16px;right:2px;">👋</div>
+        <div class="wave-emojis" style="top:-4px;right:20px;">❤️</div>
+        <div class="wave-emojis" style="top:2px;right:40px;font-size:12px;animation-delay:0.6s;">✨</div>
+      `;
+    }
+  },
+  {
+    id: 'think', name: '🤔 Think',
+    desc: '慢速 + 倾斜 + 问号 + 脉冲光环',
+    activate(p, ball, fx) {
+      p.setSpeed(0.35); p.setDirection(1); p.play();
+      fx.innerHTML = `
+        <div class="think-ring"></div><div class="think-ring"></div><div class="think-ring"></div>
+        <div class="think-particle" style="top:2px;left:10px;font-size:26px;color:#fdca6e;animation-delay:0s;">?</div>
+        <div class="think-particle" style="top:-6px;left:30px;font-size:18px;color:#a29bfe;animation-delay:0.5s;">?</div>
+        <div class="think-particle" style="top:-14px;left:46px;font-size:12px;color:#74b9ff;animation-delay:1s;">?</div>
+      `;
+    }
+  },
+  {
+    id: 'sleep', name: '😴 Sleep',
+    desc: '慢呼吸 + 暗化 + 月亮 + Z 字',
+    activate(p, ball, fx) {
+      p.setSpeed(0.12); p.setDirection(1); p.play();
+      fx.innerHTML = `
+        <div class="sleep-moon">🌙</div>
+        <div class="sleep-z">Z</div><div class="sleep-z">Z</div><div class="sleep-z">z</div>
+      `;
+    }
+  },
+  {
+    id: 'happy', name: '🎉 Happy',
+    desc: '弹跳 + 星星爆裂 + 彩纸纷飞',
+    activate(p, ball, fx) {
+      p.setSpeed(2.5); p.setDirection(1); p.play();
+      fx.innerHTML = `
+        <div class="happy-particle" style="top:2px;left:2px;font-size:22px;color:#fdca6e;animation-delay:0s;">✦</div>
+        <div class="happy-particle" style="top:-4px;right:8px;font-size:16px;color:#a29bfe;animation-delay:0.3s;">✦</div>
+        <div class="happy-particle" style="top:8px;right:-2px;font-size:12px;color:#74b9ff;animation-delay:0.6s;">✦</div>
+        <div class="happy-particle" style="top:-10px;left:20px;font-size:10px;color:#ff7675;animation-delay:0.9s;">✦</div>
+        <div class="happy-confetti" style="top:20px;left:5px;background:#fdca6e;animation-delay:0s;"></div>
+        <div class="happy-confetti" style="top:10px;left:auto;right:10px;background:#a29bfe;animation-delay:0.3s;"></div>
+        <div class="happy-confetti" style="top:15px;left:40%;background:#74b9ff;animation-delay:0.6s;"></div>
+        <div class="happy-confetti" style="top:25px;left:25%;background:#ff7675;animation-delay:0.9s;"></div>
+      `;
+    }
+  },
+  {
+    id: 'listen', name: '👂 Listen',
+    desc: '警觉微晃 + 声呐波纹 + 音符',
+    activate(p, ball, fx) {
+      p.setSpeed(1.2); p.setDirection(1); p.play();
+      fx.innerHTML = `
+        <div class="listen-ring"></div><div class="listen-ring"></div><div class="listen-ring"></div><div class="listen-ring"></div>
+        <div class="listen-wave">👂</div><div class="listen-wave">🔊</div><div class="listen-wave">♪</div>
+      `;
+    }
+  },
+  {
+    id: 'confuse', name: '😵 Confuse',
+    desc: '猛烈摇摆 + 问号爆出 + 眩晕螺旋',
+    activate(p, ball, fx) {
+      p.setSpeed(1); p.setDirection(1); p.play();
+      fx.innerHTML = `
+        <div class="confuse-spiral" style="top:50%;left:50%;transform:translate(-50%,-50%);"></div>
+        <div class="confuse-q" style="top:2px;right:6px;font-size:30px;animation-delay:0s;">?</div>
+        <div class="confuse-q" style="top:-8px;right:24px;font-size:18px;color:#74b9ff;animation-delay:0.4s;">?</div>
+        <div class="confuse-q" style="top:-16px;right:38px;font-size:12px;color:#a29bfe;animation-delay:0.8s;">?</div>
+      `;
+    }
+  },
+  {
+    id: 'excited', name: '⭐ Excited',
+    desc: '剧烈抖动 + 金色光晕 + 星爆',
+    activate(p, ball, fx) {
+      p.setSpeed(3); p.setDirection(1); p.play();
+      fx.innerHTML = `
+        <div class="excited-glow"></div>
+        <div class="excited-burst" style="top:0;left:0;font-size:20px;color:#fdca6e;animation-delay:0s;">✦</div>
+        <div class="excited-burst" style="top:-6px;right:4px;font-size:16px;color:#a29bfe;animation-delay:0.15s;">✦</div>
+        <div class="excited-burst" style="top:6px;right:-2px;font-size:14px;color:#74b9ff;animation-delay:0.3s;">✦</div>
+        <div class="excited-burst" style="bottom:20px;left:0;font-size:10px;color:#ff7675;animation-delay:0.45s;">✦</div>
+        <div class="excited-burst" style="top:-10px;left:22px;font-size:12px;color:#00b894;animation-delay:0.6s;">✦</div>
+      `;
+    }
+  },
+  {
+    id: 'code', name: '💻 Code',
+    desc: '敲击震动 + 代码飘升 + 扫描线',
+    activate(p, ball, fx) {
+      p.setSpeed(1.6); p.setDirection(1); p.play();
+      try { const l = p.getLottie(); if (l?.playSegments) l.playSegments([6, 22], true); } catch(e) {}
+      fx.innerHTML = `
+        <div class="code-beam" style="left:30%;animation-delay:0s;"></div>
+        <div class="code-beam" style="left:60%;animation-delay:0.3s;"></div>
+        <div class="code-char" style="top:6px;left:4px;font-size:16px;color:#fdca6e;animation-delay:0s;">&lt;/&gt;</div>
+        <div class="code-char" style="top:0;right:10px;font-size:12px;color:#74b9ff;animation-delay:0.35s;">const</div>
+        <div class="code-char" style="top:10px;right:2px;font-size:10px;color:#00b894;animation-delay:0.7s;">=&gt;</div>
+        <div class="code-char" style="bottom:20px;left:-2px;font-size:11px;color:#ff7675;animation-delay:1.05s;">fn()</div>
+        <div class="code-char" style="top:2px;left:24px;font-size:9px;color:#a29bfe;animation-delay:1.4s;">{...}</div>
+      `;
+    }
+  }
+];
+
+const btnContainer = document.getElementById('actionBtns');
+const ball = document.getElementById('previewBall');
+const player = document.getElementById('mascot-player');
+const fx = document.getElementById('fxContainer');
+const pName = document.getElementById('previewName');
+const pHint = document.getElementById('previewHint');
+
+let current = null;
+
+function switchAction(id) {
+  const a = actions.find(x => x.id === id);
+  if (!a || current === id) return;
+  current = id;
+
+  document.querySelectorAll('.action-btn').forEach(b =>
+    b.classList.toggle('active', b.dataset.id === id));
+
+  fx.innerHTML = '';
+  ball.className = 'preview-ball';
+  player.stop(); player.setSpeed(1); player.setDirection(1);
+
+  a.activate(player, ball, fx);
+  ball.classList.add(a.id);
+  pName.textContent = a.name;
+  pHint.textContent = a.desc;
+}
+
+actions.forEach(a => {
+  const btn = document.createElement('div');
+  btn.className = 'action-btn';
+  btn.dataset.id = a.id;
+  btn.textContent = a.name;
+  btn.onclick = () => switchAction(a.id);
+  btnContainer.appendChild(btn);
+});
+
+function init() { switchAction('idle'); }
+player.addEventListener('ready', init, { once: true });
+player.addEventListener('load', init, { once: true });
+setTimeout(() => { if (!current) init(); }, 1500);
+</script>
+</body>
+</html>

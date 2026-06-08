@@ -437,19 +437,47 @@ class Api:
 
         if resume is not None:
             # ── Resume 模式：执行 Command(resume=approved) ──
-            trace_config = dict(config)
+            # ── Tracing: 直接从事件流构建 spans ──
+            tracer = None
+            run_id_to_span_id: dict[str, str] = {}
             if self._tracing_api is not None:
-                from src.tracing.handler import TraceCallbackHandler
-                trace_config["callbacks"] = [TraceCallbackHandler(
-                    store=self._tracing_api.store, session_id=thread_id,
-                )]
+                from src.tracing.tracer import Tracer
+                tracer = Tracer(session_id=thread_id, session_turn=0)
+                tracer.start_span("session_turn", user_message="(resume)")
             try:
                 async for event in self._agent.astream_events(
                     Command(resume=resume),
-                    config=trace_config,
+                    config=config,
                     version="v2",
                 ):
                     kind = event.get("event", "")
+                    run_id = event.get("run_id")
+                    # ── Tracing spans ──
+                    if tracer is not None:
+                        if kind == "on_chat_model_start":
+                            sid = tracer.start_span("llm_call", model=event.get("name", "") or "chat_model")
+                            run_id_to_span_id[run_id] = sid
+                        elif kind == "on_chat_model_end":
+                            sid = run_id_to_span_id.pop(run_id, None)
+                            if sid:
+                                tracer.end_span(sid)
+                        elif kind == "on_chat_model_error":
+                            sid = run_id_to_span_id.pop(run_id, None)
+                            if sid:
+                                tracer.end_span(sid, status="error", error_message=str(event.get("data", {}).get("error", "")))
+                        elif kind == "on_tool_start":
+                            name = event.get("name", "?")
+                            inp = event["data"].get("input", "")
+                            sid = tracer.start_span("tool_call", tool_name=name, tool_input=_short_repr(inp, 500))
+                            run_id_to_span_id[run_id] = sid
+                        elif kind == "on_tool_end":
+                            sid = run_id_to_span_id.pop(run_id, None)
+                            if sid:
+                                tracer.end_span(sid)
+                        elif kind == "on_tool_error":
+                            sid = run_id_to_span_id.pop(run_id, None)
+                            if sid:
+                                tracer.end_span(sid, status="error", error_message=str(event.get("data", {}).get("error", "")))
                     if kind == "on_chat_model_stream":
                         chunk = event["data"].get("chunk")
                         if chunk is None:
@@ -471,6 +499,14 @@ class Api:
             except Exception as exc:
                 yield {"event": "error", "data": {"error": str(exc)}}
                 return
+            finally:
+                # ── Tracing: 结束根 span 并写入 store ──
+                if tracer is not None and self._tracing_api is not None:
+                    for sid in list(tracer._span_stack):
+                        tracer.end_span(sid)
+                    finished = list(tracer._spans.values())
+                    if finished:
+                        self._tracing_api.store.write_spans(finished)
             yield {"event": "done", "data": {}}
             await self._update_turn_count(thread_id)
             if self._memory_manager:
@@ -530,32 +566,74 @@ class Api:
         except Exception:
             pass
 
+        # ── Tracing: 直接从事件流构建 spans（比 callback handler 更可靠）──
+        tracer = None
+        run_id_to_span_id: dict[str, str] = {}
+        if self._tracing_api is not None:
+            from src.tracing.tracer import Tracer
+            session_turn = 0
+            try:
+                state = await self._agent.aget_state(config)
+                msgs = list(state.values.get("messages", []) or [])
+                session_turn = sum(1 for m in msgs if getattr(m, "type", "") == "human")
+            except Exception:
+                pass
+            tracer = Tracer(session_id=thread_id, session_turn=session_turn)
+            tracer.start_span("session_turn", user_message=message)
+
         # ── Debug 上下文（在 on_chat_model_start 事件中捕获，确保包含中间件注入的消息）──
         debug_enabled = self.get_settings().get("debug_enabled", False)
         debug_emitted = False
 
         try:
-            trace_config = dict(config)
-            if self._tracing_api is not None:
-                from src.tracing.handler import TraceCallbackHandler
-                # 计算当前 turn 数作为 session_turn
-                session_turn = 0
-                try:
-                    state = await self._agent.aget_state(config)
-                    msgs = list(state.values.get("messages", []) or [])
-                    session_turn = sum(1 for m in msgs if getattr(m, "type", "") == "human")
-                except Exception:
-                    pass
-                trace_config["callbacks"] = [TraceCallbackHandler(
-                    store=self._tracing_api.store, session_id=thread_id,
-                    session_turn=session_turn,
-                )]
             async for event in self._agent.astream_events(
                 {"messages": [HumanMessage(content=message)]},
-                config=trace_config,
+                config=config,
                 version="v2",
             ):
                 kind = event.get("event", "")
+                run_id = event.get("run_id")
+
+                # ── Tracing spans ──
+                if tracer is not None:
+                    if kind == "on_chain_start" and not tracer.current_span_id:
+                        # only create root span if not already set
+                        tracer.start_span("session_turn", user_message=message)
+                    elif kind == "on_chat_model_start":
+                        name = event.get("name", "") or "chat_model"
+                        sid = tracer.start_span("llm_call", model=name)
+                        run_id_to_span_id[run_id] = sid
+                    elif kind == "on_chat_model_end":
+                        sid = run_id_to_span_id.pop(run_id, None)
+                        if sid:
+                            resp = event.get("data", {}).get("output", {})
+                            usage = getattr(resp, "usage_metadata", None)
+                            if isinstance(usage, dict):
+                                span = tracer._spans.get(sid)
+                                if span:
+                                    span.input_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
+                                    span.output_tokens = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
+                            tracer.end_span(sid)
+                    elif kind == "on_chat_model_error":
+                        sid = run_id_to_span_id.pop(run_id, None)
+                        if sid:
+                            tracer.end_span(sid, status="error",
+                                            error_message=str(event.get("data", {}).get("error", "")))
+                    elif kind == "on_tool_start":
+                        name = event.get("name", "?")
+                        inp = event["data"].get("input", "")
+                        sid = tracer.start_span("tool_call", tool_name=name,
+                                                tool_input=_short_repr(inp, 500))
+                        run_id_to_span_id[run_id] = sid
+                    elif kind == "on_tool_end":
+                        sid = run_id_to_span_id.pop(run_id, None)
+                        if sid:
+                            tracer.end_span(sid)
+                    elif kind == "on_tool_error":
+                        sid = run_id_to_span_id.pop(run_id, None)
+                        if sid:
+                            tracer.end_span(sid, status="error",
+                                            error_message=str(event.get("data", {}).get("error", "")))
 
                 # ── 从 on_chat_model_start 捕获 LLM 实际接收到的完整输入 ──
                 if debug_enabled and not debug_emitted and kind == "on_chat_model_start":
@@ -635,6 +713,14 @@ class Api:
         except Exception as exc:
             yield {"event": "error", "data": {"error": str(exc)}}
             return
+        finally:
+            # ── Tracing: 结束根 span 并写入 store ──
+            if tracer is not None and self._tracing_api is not None:
+                for sid in list(tracer._span_stack):
+                    tracer.end_span(sid)
+                finished = list(tracer._spans.values())
+                if finished:
+                    self._tracing_api.store.write_spans(finished)
 
         # ── 检查是否有 interrupt（如 shell 确认）──
         try:

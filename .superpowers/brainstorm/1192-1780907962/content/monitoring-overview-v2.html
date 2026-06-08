@@ -1,0 +1,110 @@
+<style>
+  body { background: #1a1a2e !important; }
+  .card { background: #242438; border: 1px solid #3a3a52; border-radius: 10px; padding: 14px; }
+  .card-title { font-size: 10px; color: #8888aa; letter-spacing: 0.3px; margin-bottom: 4px; }
+  .card-value { font-size: 22px; font-weight: 700; color: #fff; }
+  .tab-active { background: #6c5ce7; color: #fff; padding: 5px 16px; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .tab-inactive { background: #2a2a42; color: #8888bb; padding: 5px 16px; border-radius: 8px; font-size: 12px; font-weight: 500; cursor: pointer; }
+  .trace-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 8px; background: #1e1e34; border: 1px solid #2e2e48; cursor: pointer; }
+  .trace-row:hover { background: #2a2a42; }
+  .badge-ok { font-size: 10px; padding: 2px 8px; border-radius: 4px; background: #1a3a2a; color: #4ade80; border: 1px solid #2a5a3a; }
+  .badge-err { font-size: 10px; padding: 2px 8px; border-radius: 4px; background: #3a1a1a; color: #f87171; border: 1px solid #5a2a2a; }
+  .bar-bg { background: #2a2a42; }
+  .bar-fill { background: linear-gradient(180deg, #6c5ce7, #a29bfe); border-radius: 3px 3px 0 0; }
+  .mono { font-family: Menlo, Monaco, Consolas, monospace; }
+</style>
+
+<h2 style="font-size:16px;font-weight:700;color:#fff;margin-bottom:4px;">📊 监控</h2>
+<p style="font-size:12px;color:#8888aa;margin-bottom:16px;">链路追踪与 Token 消耗统计</p>
+
+<!-- 选项卡 -->
+<div style="display:flex;gap:6px;margin-bottom:16px;">
+  <span class="tab-active">总览</span>
+  <span class="tab-inactive">Trace</span>
+  <span class="tab-inactive">Token</span>
+  <span class="tab-inactive">延迟</span>
+</div>
+
+<!-- 摘要卡片 -->
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
+  <div class="card">
+    <div class="card-title">今日 Token</div>
+    <div class="card-value">142.5K</div>
+    <div class="card-sub" style="color:#4ade80;font-size:11px;margin-top:2px;">≈ ¥2.85 &nbsp;↑12%</div>
+  </div>
+  <div class="card">
+    <div class="card-title">平均延迟</div>
+    <div class="card-value">1.8s</div>
+    <div class="card-sub" style="color:#4ade80;font-size:11px;margin-top:2px;">↓0.3s 较昨日</div>
+  </div>
+  <div class="card">
+    <div class="card-title">今日调用</div>
+    <div class="card-value">89</div>
+    <div class="card-sub" style="color:#8888aa;font-size:11px;margin-top:2px;">↑5 较昨日</div>
+  </div>
+  <div class="card">
+    <div class="card-title">错误率</div>
+    <div class="card-value">3.2%</div>
+    <div class="card-sub" style="color:#f87171;font-size:11px;margin-top:2px;">↑1.1% 较昨日</div>
+  </div>
+</div>
+
+<!-- Token 趋势图 -->
+<div class="card" style="margin-bottom:16px;">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+    <span style="font-size:13px;font-weight:600;color:#ddd;">Token 消耗趋势</span>
+    <span style="font-size:11px;color:#8888aa;">过去 12 小时</span>
+  </div>
+  <div style="display:flex;align-items:flex-end;height:80px;gap:5px;">
+    <div class="bar-bg" style="flex:1;border-radius:3px 3px 0 0;"><div class="bar-fill" style="height:30%;width:100%;"></div></div>
+    <div class="bar-bg" style="flex:1;border-radius:3px 3px 0 0;"><div class="bar-fill" style="height:45%;width:100%;"></div></div>
+    <div class="bar-bg" style="flex:1;border-radius:3px 3px 0 0;"><div class="bar-fill" style="height:25%;width:100%;"></div></div>
+    <div class="bar-bg" style="flex:1;border-radius:3px 3px 0 0;"><div class="bar-fill" style="height:55%;width:100%;"></div></div>
+    <div class="bar-bg" style="flex:1;border-radius:3px 3px 0 0;"><div class="bar-fill" style="height:35%;width:100%;"></div></div>
+    <div class="bar-bg" style="flex:1;border-radius:3px 3px 0 0;"><div class="bar-fill" style="height:70%;width:100%;"></div></div>
+    <div class="bar-bg" style="flex:1;border-radius:3px 3px 0 0;"><div class="bar-fill" style="height:50%;width:100%;"></div></div>
+    <div class="bar-bg" style="flex:1;border-radius:3px 3px 0 0;"><div class="bar-fill" style="height:75%;width:100%;"></div></div>
+    <div class="bar-bg" style="flex:1;border-radius:3px 3px 0 0;"><div class="bar-fill" style="height:40%;width:100%;"></div></div>
+    <div class="bar-bg" style="flex:1;border-radius:3px 3px 0 0;"><div class="bar-fill" style="height:60%;width:100%;"></div></div>
+    <div class="bar-bg" style="flex:1;border-radius:3px 3px 0 0;"><div class="bar-fill" style="height:28%;width:100%;"></div></div>
+    <div class="bar-bg" style="flex:1;border-radius:3px 3px 0 0;"><div class="bar-fill" style="height:52%;width:100%;"></div></div>
+  </div>
+</div>
+
+<!-- 近期 Trace -->
+<div class="card">
+  <div style="font-size:13px;font-weight:600;color:#ddd;margin-bottom:12px;">近期 Trace</div>
+  <div style="display:flex;flex-direction:column;gap:8px;">
+    <div class="trace-row">
+      <span style="width:8px;height:8px;border-radius:50%;background:#4ade80;flex-shrink:0;"></span>
+      <span class="mono" style="font-size:11px;color:#aaa;flex:1;">a1b2c3d4</span>
+      <span style="font-size:11px;color:#888;">14:32</span>
+      <span style="font-size:11px;color:#aaa;">8.3K</span>
+      <span style="font-size:11px;color:#888;">3.2s</span>
+      <span style="font-size:11px;color:#666;">4工具</span>
+      <span class="badge-ok">完成</span>
+    </div>
+    <div class="trace-row">
+      <span style="width:8px;height:8px;border-radius:50%;background:#f87171;flex-shrink:0;"></span>
+      <span class="mono" style="font-size:11px;color:#aaa;flex:1;">e5f6g7h8</span>
+      <span style="font-size:11px;color:#888;">14:15</span>
+      <span style="font-size:11px;color:#aaa;">12.9K</span>
+      <span style="font-size:11px;color:#888;">5.7s</span>
+      <span style="font-size:11px;color:#666;">7工具</span>
+      <span class="badge-err">失败</span>
+    </div>
+    <div class="trace-row">
+      <span style="width:8px;height:8px;border-radius:50%;background:#4ade80;flex-shrink:0;"></span>
+      <span class="mono" style="font-size:11px;color:#aaa;flex:1;">i9j0k1l2</span>
+      <span style="font-size:11px;color:#888;">14:02</span>
+      <span style="font-size:11px;color:#aaa;">3.2K</span>
+      <span style="font-size:11px;color:#888;">0.9s</span>
+      <span style="font-size:11px;color:#666;">1工具</span>
+      <span class="badge-ok">完成</span>
+    </div>
+  </div>
+</div>
+
+<div style="text-align:center;margin-top:16px;">
+  <span style="color:#a29bfe;font-size:12px;cursor:pointer;font-weight:600;">查看全部 Trace →</span>
+</div>

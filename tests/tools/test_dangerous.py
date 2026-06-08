@@ -1,6 +1,6 @@
 import pytest
-from src.tools.dangerous import ConfirmationError, check_danger
-from src.tools.shell_patterns import DangerLevel
+from src.tools.shell.danger import ConfirmationError, check_danger
+from src.tools.shell.patterns import DangerLevel
 
 
 class TestConfirmationError:
