@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent Shell</title>
+  <script src="assets/lottie-player.js"></script>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- ======== Ball Mode ======== -->
+  <div id="ball-wrapper">
+    <div id="mascot-container">
+      <lottie-player
+        id="mascot"
+        src="assets/mascot.json"
+        background="transparent"
+        speed="1"
+        loop
+        autoplay
+        style="width: 140px; height: 140px;">
+      </lottie-player>
+      <div id="mascot-fx" class="mascot-fx"></div>
+    </div>
+
+    <div id="hover-menu" class="hidden">
+      <button class="menu-btn" data-panel="settings">&#9881; 设置</button>
+      <button class="menu-btn" data-panel="chat">&#128172; 对话</button>
+      <button class="menu-btn" data-panel="tools">&#128736; 工具</button>
+      <button class="menu-btn" data-panel="skills">&#9889; 技能</button>
+      <button class="menu-btn" data-panel="monitoring">&#128200; 监控</button>
+    </div>
+    <button id="ball-close-btn" title="退出">&#10005;</button>
+  </div>
+
+  <!-- ======== Panel Mode ======== -->
+  <div id="panel-mode" class="hidden">
+    <div id="settings-panel" class="panel">
+      <div class="panel-header">
+        <h3>&#9881; 设置</h3>
+        <button class="close-btn" data-close-panel title="关闭">&times;</button>
+      </div>
+      <div class="panel-body">
+        <div class="form-group">
+          <label>LLM 协议</label>
+          <select id="llm-provider">
+            <option value="openai">OpenAI 兼容</option>
+            <option value="anthropic">Anthropic Claude</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>请求地址 (Base URL)</label>
+          <input type="text" id="llm-base-url" placeholder="例如：https://api.deepseek.com">
+        </div>
+        <div class="form-group">
+          <label>API Key</label>
+          <div class="input-with-toggle">
+            <input type="password" id="api-key" placeholder="sk-..." autocomplete="off">
+            <button class="toggle-visibility" data-target="api-key" title="显示/隐藏">&#128065;</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Model</label>
+          <input type="text" id="model-name" placeholder="gpt-4o">
+        </div>
+        <div class="form-group">
+          <label>调试模式</label>
+          <div class="debug-toggle-row">
+            <span class="debug-toggle-hint">开启后可在对话中查看每次发送给 agent 的完整上下文</span>
+            <div class="toggle-wrapper">
+              <button class="toggle-track" id="debug-toggle" data-enabled="0">
+                <span class="toggle-knob"></span>
+              </button>
+              <span class="toggle-label">关</span>
+            </div>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Soul</label>
+          <textarea id="soul-config" rows="4" placeholder="soul.json" spellcheck="false"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Profile</label>
+          <textarea id="profile-config" rows="4" placeholder="profile.json" spellcheck="false"></textarea>
+        </div>
+        <div class="panel-footer">
+          <button id="save-settings" class="btn-primary">保存</button>
+          <button id="cancel-settings" class="btn-secondary">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="chat-panel" class="panel">
+      <div class="panel-header">
+        <h3><button class="chat-back-btn hidden" id="chat-back-btn" title="返回会话列表">&#8592;</button> &#128172; 对话</h3>
+        <span id="chat-panel-title" class="panel-subtitle"></span>
+        <button class="close-btn" data-close-panel title="关闭">&times;</button>
+      </div>
+      <div class="panel-body">
+        <!-- 会话列表 -->
+        <div id="session-list-view">
+          <div class="session-list" id="session-list">
+            <div class="empty-state">暂无会话</div>
+          </div>
+          <div class="panel-footer">
+            <button id="new-session" class="btn-primary">新建会话</button>
+          </div>
+        </div>
+        <!-- 聊天视图 -->
+        <div id="chat-view" class="hidden">
+          <div id="chat-messages">
+            <div class="chat-empty">选择一个会话开始对话</div>
+          </div>
+          <div id="chat-input-area">
+            <textarea id="chat-input" placeholder="输入消息..." rows="2" spellcheck="false"></textarea>
+            <button id="chat-send" class="btn-primary" disabled>发送</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="tools-panel" class="panel">
+      <div class="panel-header">
+        <h3>&#128736; 工具</h3>
+        <button class="close-btn" data-close-panel title="关闭">&times;</button>
+      </div>
+      <div class="panel-body">
+        <div class="tools-grid" id="tools-grid">
+          <div class="empty-state">加载中...</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="skills-panel" class="panel">
+      <div class="panel-header">
+        <h3>&#9889; 技能</h3>
+        <span class="panel-subtitle">Skill 能力包</span>
+        <button class="close-btn" data-close-panel title="关闭">&times;</button>
+      </div>
+      <div class="panel-body">
+        <div id="skills-list">
+          <div class="empty-state">加载中...</div>
+        </div>
+      </div>
+    </div>
+
+    <div id="monitoring-panel" class="panel hidden">
+      <div class="panel-header">
+        <h3>监控</h3>
+        <span class="panel-subtitle">链路追踪与 Token 消耗</span>
+        <button class="close-btn" data-close-panel title="关闭">&times;</button>
+      </div>
+      <div class="panel-body" id="monitoring-body">
+      </div>
+    </div>
+  </div>
+
+  <div id="confirm-dialog" class="confirm-overlay hidden">
+    <div class="confirm-box">
+      <div class="confirm-icon">&#9888;</div>
+      <div class="confirm-message" id="confirm-message">确定要删除此会话吗？</div>
+      <div class="confirm-actions">
+        <button id="confirm-cancel" class="btn-secondary">取消</button>
+        <button id="confirm-ok" class="btn-danger">删除</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ======== Command Confirm Dialog ======== -->
+  <div id="command-confirm-dialog" class="confirm-overlay hidden">
+    <div class="confirm-box">
+      <div class="confirm-icon">&#9888;</div>
+      <div class="confirm-message">
+        <div>需要确认执行以下操作：</div>
+        <pre id="confirm-command" style="background:rgba(0,0,0,0.3);color:#e0e0e0;padding:8px;border-radius:4px;margin:8px 0;font-size:12px;word-break:break-all;white-space:pre-wrap;"></pre>
+        <div style="font-size:13px;color:#666;" id="confirm-reason"></div>
+      </div>
+      <div class="confirm-actions">
+        <button id="cmd-confirm-cancel" class="btn-secondary">取消</button>
+        <button id="cmd-confirm-ok" class="btn-primary" style="background:#52c41a;">确认执行</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="browser-api.js"></script>
+  <script src="mascot-controller.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
