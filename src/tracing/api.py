@@ -41,7 +41,7 @@ class TracingAPI:
             "spans": spans,
             "tree": root,
             "total_duration_ms": root.get("duration_ms", 0),
-            "total_tokens": root.get("input_tokens", 0) + root.get("output_tokens", 0),
+            "total_tokens": sum(s.get("input_tokens", 0) + s.get("output_tokens", 0) for s in spans),
             "user_message": root.get("user_message", ""),
         }
 

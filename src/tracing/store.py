@@ -165,20 +165,19 @@ class TraceStore:
             conn = sqlite3.connect(self._db_path)
             try:
                 today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                today_end = today + " 23:59:59"
                 # session_turn count, avg duration, error count
                 row = conn.execute(
                     "SELECT COUNT(*) as total_traces, "
                     "COALESCE(AVG(duration_ms), 0) as avg_duration_ms, "
                     "SUM(CASE WHEN status='error' THEN 1 ELSE 0 END) as error_count "
-                    "FROM spans WHERE span_type='session_turn' AND started_at >= ? AND started_at <= ?",
-                    (today, today_end),
+                    "FROM spans WHERE span_type='session_turn' AND started_at >= ?",
+                    (today,),
                 ).fetchone()
                 # token sums from ALL spans today (token data lives on llm_call spans)
                 row_t = conn.execute(
                     "SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0) "
-                    "FROM spans WHERE started_at >= ? AND started_at <= ?",
-                    (today, today_end),
+                    "FROM spans WHERE started_at >= ?",
+                    (today,),
                 ).fetchone()
                 yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
                 row_y = conn.execute(
