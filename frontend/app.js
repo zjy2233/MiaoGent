@@ -1142,15 +1142,7 @@ async function loadOverview() {
         </div>`;
       });
     } else {
-      // Mock bars
-      for (let i = 0; i < 12; i++) {
-        const h = 20 + Math.random() * 50;
-        barsHtml += `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;">
-          <div style="background:#2a2a42;border-radius:3px;height:60px;width:100%;display:flex;align-items:flex-end;">
-            <div style="background:linear-gradient(180deg,#6c5ce7,#a29bfe);border-radius:3px 3px 0 0;width:100%;height:${h}%;"></div>
-          </div>
-        </div>`;
-      }
+      barsHtml = '<div style="text-align:center;padding:20px;color:#888;width:100%;">暂无趋势数据，发送消息后即可生成</div>';
     }
 
     container.innerHTML = `

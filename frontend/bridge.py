@@ -437,10 +437,16 @@ class Api:
 
         if resume is not None:
             # ── Resume 模式：执行 Command(resume=approved) ──
+            trace_config = dict(config)
+            if self._tracing_api is not None:
+                from src.tracing.handler import TraceCallbackHandler
+                trace_config["callbacks"] = [TraceCallbackHandler(
+                    store=self._tracing_api.store, session_id=thread_id,
+                )]
             try:
                 async for event in self._agent.astream_events(
                     Command(resume=resume),
-                    config=config,
+                    config=trace_config,
                     version="v2",
                 ):
                     kind = event.get("event", "")
@@ -529,9 +535,24 @@ class Api:
         debug_emitted = False
 
         try:
+            trace_config = dict(config)
+            if self._tracing_api is not None:
+                from src.tracing.handler import TraceCallbackHandler
+                # 计算当前 turn 数作为 session_turn
+                session_turn = 0
+                try:
+                    state = await self._agent.aget_state(config)
+                    msgs = list(state.values.get("messages", []) or [])
+                    session_turn = sum(1 for m in msgs if getattr(m, "type", "") == "human")
+                except Exception:
+                    pass
+                trace_config["callbacks"] = [TraceCallbackHandler(
+                    store=self._tracing_api.store, session_id=thread_id,
+                    session_turn=session_turn,
+                )]
             async for event in self._agent.astream_events(
                 {"messages": [HumanMessage(content=message)]},
-                config=config,
+                config=trace_config,
                 version="v2",
             ):
                 kind = event.get("event", "")
