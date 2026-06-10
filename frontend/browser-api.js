@@ -173,6 +173,7 @@
     getTraceSpans: (traceId) => fetchJSON(`${BASE_URL}/api/traces/${traceId}/spans`),
     getTraceStats: () => fetchJSON(`${BASE_URL}/api/traces/stats`),
     getTraceDailyStats: () => fetchJSON(`${BASE_URL}/api/traces/stats/daily`),
+    getTraceCacheStats: () => fetchJSON(`${BASE_URL}/api/traces/stats/cache`),
     getTracesBySession: (sessionId) => fetchJSON(`${BASE_URL}/api/traces/sessions/${sessionId}`),
   };
 

@@ -202,6 +202,8 @@ const api = {
     fetch(`${BASE_URL}/api/traces/stats`).then((r) => r.json()),
   getTraceDailyStats: () =>
     fetch(`${BASE_URL}/api/traces/stats/daily`).then((r) => r.json()),
+  getTraceCacheStats: () =>
+    fetch(`${BASE_URL}/api/traces/stats/cache`).then((r) => r.json()),
   getTracesBySession: (sessionId) =>
     fetch(`${BASE_URL}/api/traces/sessions/${sessionId}`).then((r) => r.json()),
 };

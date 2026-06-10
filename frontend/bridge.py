@@ -809,6 +809,23 @@ class Api:
             return {"total_traces": 0, "total_tokens": 0, "avg_duration_ms": 0, "error_rate": 0}
         return self._tracing_api.get_stats()
 
+    def get_trace_cache_stats(self) -> dict:
+        if self._tracing_api is None:
+            return {
+                "total_cache_hit_tokens": 0,
+                "total_cache_miss_tokens": 0,
+                "cache_hit_rate": 0,
+            }
+        base = self._tracing_api.get_stats()
+        hit = base.get("total_cache_hit_tokens", 0)
+        miss = base.get("total_cache_miss_tokens", 0)
+        total_cacheable = hit + miss
+        return {
+            "total_cache_hit_tokens": hit,
+            "total_cache_miss_tokens": miss,
+            "cache_hit_rate": round(hit / total_cacheable * 100, 1) if total_cacheable > 0 else 0,
+        }
+
     def get_trace_daily_stats(self) -> list[dict]:
         if self._tracing_api is None:
             return []

@@ -346,6 +346,10 @@ async def get_trace_daily_stats(request: Request) -> Response:
     return json_response(get_api().get_trace_daily_stats())
 
 
+async def get_trace_cache_stats(request: Request) -> Response:
+    return json_response(get_api().get_trace_cache_stats())
+
+
 async def get_traces_by_session(request: Request) -> Response:
     session_id = request.match_info["session_id"]
     return json_response(get_api().get_traces_by_session(session_id))
@@ -377,6 +381,7 @@ def setup_routes(app: web.Application) -> None:
     app.router.add_route("GET", "/api/traces", get_traces)
     app.router.add_route("GET", "/api/traces/stats", get_trace_stats)
     app.router.add_route("GET", "/api/traces/stats/daily", get_trace_daily_stats)
+    app.router.add_route("GET", "/api/traces/stats/cache", get_trace_cache_stats)
     app.router.add_route("GET", "/api/traces/{trace_id}", get_trace_detail)
     app.router.add_route("GET", "/api/traces/{trace_id}/spans", get_trace_spans)
     app.router.add_route("GET", "/api/traces/sessions/{session_id}", get_traces_by_session)
