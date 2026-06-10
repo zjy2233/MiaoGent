@@ -101,20 +101,37 @@ def _parse_tool_files(tools_dir: Path) -> list[dict[str, str]]:
         return []
     results: list[dict[str, str]] = []
     for py_file in sorted(tools_dir.rglob("*.py")):
-        if py_file.name == "__init__.py":
+        # Only skip the root __init__.py (re-exports), not sub-package ones
+        if py_file == tools_dir / "__init__.py":
             continue
         try:
             source = py_file.read_text(encoding="utf-8")
             tree = ast.parse(source, filename=str(py_file))
         except (OSError, SyntaxError):
             continue
+
+        # ── Extract module-level __category__ ──
+        category = ""
+        for stmt in tree.body:
+            if isinstance(stmt, ast.Assign):
+                for target in stmt.targets:
+                    if isinstance(target, ast.Name) and target.id == "__category__":
+                        if isinstance(stmt.value, ast.Constant):
+                            category = stmt.value.value
+                        break
+
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             if not any(_is_tool_decorator(d) for d in node.decorator_list):
                 continue
             doc = ast.get_docstring(node) or ""
-            results.append({"name": node.name, "description": doc.strip(), "file": str(py_file)})
+            results.append({
+                "name": node.name,
+                "description": doc.strip(),
+                "file": str(py_file),
+                "category": category,
+            })
     return results
 
 
@@ -328,7 +345,7 @@ class Api:
         registry.add(tid)
         return {"thread_id": tid}
 
-    async def get_messages(self, thread_id: str) -> list[dict[str, str]]:
+    async def get_messages(self, thread_id: str, *, include_tool_calls: bool = True) -> list[dict[str, str]]:
         if self._agent is None:
             return []
         config = {"configurable": {"thread_id": thread_id}}
@@ -349,22 +366,31 @@ class Api:
                         if block_type == "text":
                             parts.append(block.get("text", ""))
                         elif block_type == "tool_use":
-                            name = block.get("name", "")
-                            inp = block.get("input", {})
-                            parts.append(f"[工具: {name}({json.dumps(inp, ensure_ascii=False)})]")
+                            if include_tool_calls:
+                                name = block.get("name", "")
+                                inp = block.get("input", {})
+                                parts.append(f"[工具: {name}({json.dumps(inp, ensure_ascii=False)})]")
+                        elif block_type == "tool_result":
+                            # 历史消息中不展示工具执行结果
+                            if include_tool_calls:
+                                parts.append("[工具结果]")
                         else:
                             parts.append(str(block.get("text", "")))
             elif content:
                 parts.append(str(content))
             # 如果消息有 tool_calls 属性（非 content list 方式），也添加
-            tc = getattr(m, "tool_calls", None)
-            if tc:
-                for call in tc:
-                    tname = call.get("name", "") if isinstance(call, dict) else ""
-                    targs = call.get("args", {}) if isinstance(call, dict) else {}
-                    if tname:
-                        parts.append(f"[工具调用: {tname}({json.dumps(targs, ensure_ascii=False)})]")
+            if include_tool_calls:
+                tc = getattr(m, "tool_calls", None)
+                if tc:
+                    for call in tc:
+                        tname = call.get("name", "") if isinstance(call, dict) else ""
+                        targs = call.get("args", {}) if isinstance(call, dict) else {}
+                        if tname:
+                            parts.append(f"[工具调用: {tname}({json.dumps(targs, ensure_ascii=False)})]")
             text = "".join(parts)
+            # 历史模式：跳过纯工具消息（tool role），只保留 human/ai
+            if not include_tool_calls and role in ("tool",):
+                continue
             result.append({"role": role, "content": text} if text else {"role": role})
         return result
 
@@ -511,6 +537,7 @@ class Api:
             run_id_to_span_id: dict[str, str] = {}
             if self._tracing_api is not None:
                 from src.tracing.tracer import Tracer
+                from src.tracing.context import set_trace_context, clear_trace_context
                 tracer = Tracer(session_id=thread_id, session_turn=0)
                 tracer.start_span("session_turn", user_message="(resume)")
             try:
@@ -533,16 +560,31 @@ class Api:
                                 resp = event.get("data", {}).get("output", {})
                                 if isinstance(resp, dict):
                                     usage = resp.get("usage_metadata") or {}
+                                    resp_meta = resp.get("response_metadata") or {}
                                 else:
                                     usage = getattr(resp, "usage_metadata", {})
+                                    resp_meta = getattr(resp, "response_metadata", {})
                                 span = tracer._spans.get(sid)
                                 if span:
                                     span.llm_output = _serialize_llm_output(resp)
                                     if isinstance(usage, dict) and usage:
                                         span.input_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
                                         span.output_tokens = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
-                                        span.cache_hit_tokens = usage.get("prompt_cache_hit_tokens", 0) or usage.get("cache_read_input_tokens", 0)
-                                        span.cache_miss_tokens = usage.get("prompt_cache_miss_tokens", 0) or usage.get("cache_creation_input_tokens", 0)
+                                    # Cache tokens: try Anthropic usage_metadata, then
+                                    # DeepSeek/OpenAI response_metadata.token_usage (direct keys)
+                                    token_usage = resp_meta.get("token_usage") or {}
+                                    details = token_usage.get("prompt_tokens_details") or {}
+                                    span.cache_hit_tokens = (
+                                        usage.get("prompt_cache_hit_tokens", 0)
+                                        or usage.get("cache_read_input_tokens", 0)
+                                        or token_usage.get("prompt_cache_hit_tokens", 0)
+                                        or details.get("cached_tokens", 0)
+                                    )
+                                    span.cache_miss_tokens = (
+                                        usage.get("prompt_cache_miss_tokens", 0)
+                                        or usage.get("cache_creation_input_tokens", 0)
+                                        or token_usage.get("prompt_cache_miss_tokens", 0)
+                                    )
                                 tracer.end_span(sid)
                         elif kind == "on_chat_model_error":
                             sid = run_id_to_span_id.pop(run_id, None)
@@ -656,6 +698,7 @@ class Api:
         run_id_to_span_id: dict[str, str] = {}
         if self._tracing_api is not None:
             from src.tracing.tracer import Tracer
+            from src.tracing.context import set_trace_context, clear_trace_context
             session_turn = 0
             try:
                 state = await self._agent.aget_state(config)
@@ -693,19 +736,33 @@ class Api:
                         if sid:
                             resp = event.get("data", {}).get("output", {})
                             span = tracer._spans.get(sid)
-                            if span:
-                                span.llm_output = _serialize_llm_output(resp)
                             # Try both AIMessage.usage_metadata and dict access
                             if isinstance(resp, dict):
                                 usage = resp.get("usage_metadata") or {}
+                                resp_meta = resp.get("response_metadata") or {}
                             else:
                                 usage = getattr(resp, "usage_metadata", {})
-                            if isinstance(usage, dict) and usage:
-                                if span:
+                                resp_meta = getattr(resp, "response_metadata", {})
+                            if span:
+                                span.llm_output = _serialize_llm_output(resp)
+                                if isinstance(usage, dict) and usage:
                                     span.input_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
                                     span.output_tokens = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
-                                    span.cache_hit_tokens = usage.get("prompt_cache_hit_tokens", 0) or usage.get("cache_read_input_tokens", 0)
-                                    span.cache_miss_tokens = usage.get("prompt_cache_miss_tokens", 0) or usage.get("cache_creation_input_tokens", 0)
+                                # Cache tokens: try Anthropic-format usage_metadata first,
+                                # then OpenAI-format response_metadata.token_usage.prompt_tokens_details
+                                token_usage = resp_meta.get("token_usage") or {}
+                                details = token_usage.get("prompt_tokens_details") or {}
+                                span.cache_hit_tokens = (
+                                    usage.get("prompt_cache_hit_tokens", 0)
+                                    or usage.get("cache_read_input_tokens", 0)
+                                    or token_usage.get("prompt_cache_hit_tokens", 0)
+                                    or details.get("cached_tokens", 0)
+                                )
+                                span.cache_miss_tokens = (
+                                    usage.get("prompt_cache_miss_tokens", 0)
+                                    or usage.get("cache_creation_input_tokens", 0)
+                                    or token_usage.get("prompt_cache_miss_tokens", 0)
+                                )
                             tracer.end_span(sid)
                     elif kind == "on_chat_model_error":
                         sid = run_id_to_span_id.pop(run_id, None)
@@ -715,20 +772,31 @@ class Api:
                     elif kind == "on_tool_start":
                         name = event.get("name", "?")
                         inp = event["data"].get("input", "")
-                        sid = tracer.start_span("tool_call", tool_name=name,
+                        is_delegate = name == "delegate_task"
+                        span_type = "delegate_task" if is_delegate else "tool_call"
+                        sid = tracer.start_span(span_type, tool_name=name,
                                                 tool_input=_short_repr(inp, 500))
                         run_id_to_span_id[run_id] = sid
+                        if is_delegate:
+                            set_trace_context(tracer, sid)
                     elif kind == "on_tool_end":
                         sid = run_id_to_span_id.pop(run_id, None)
                         if sid:
                             if (span := tracer._spans.get(sid)):
                                 span.tool_output = _short_repr(event["data"].get("output"), 4096)
+                            is_delegate = span and span.span_type == "delegate_task"
                             tracer.end_span(sid)
+                            if is_delegate:
+                                clear_trace_context()
                     elif kind == "on_tool_error":
                         sid = run_id_to_span_id.pop(run_id, None)
                         if sid:
+                            is_delegate = (tracer._spans.get(sid) or None)
+                            is_delegate = is_delegate and is_delegate.span_type == "delegate_task"
                             tracer.end_span(sid, status="error",
                                             error_message=str(event.get("data", {}).get("error", "")))
+                            if is_delegate:
+                                clear_trace_context()
 
                 # ── 从 on_chat_model_start 捕获 LLM 实际接收到的完整输入 ──
                 if debug_enabled and not debug_emitted and kind == "on_chat_model_start":
@@ -895,8 +963,9 @@ class Api:
                 "cache_hit_rate": 0,
             }
         base = self._tracing_api.get_stats()
-        hit = base.get("total_cache_hit_tokens", 0)
-        miss = base.get("total_cache_miss_tokens", 0)
+        # Prefer all-time totals, fall back to today's
+        hit = base.get("all_time_cache_hit_tokens", 0) or base.get("total_cache_hit_tokens", 0)
+        miss = base.get("all_time_cache_miss_tokens", 0) or base.get("total_cache_miss_tokens", 0)
         total_cacheable = hit + miss
         return {
             "total_cache_hit_tokens": hit,

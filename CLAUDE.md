@@ -207,3 +207,4 @@ src/skills/weather/
 
 - 所有 agent 调用均为异步（`ainvoke` / `astream_events`），必须通过 `asyncio.run()` 或 aiohttp handler 调用
 - 能使用 langchain 和 langGraph 框架内置功能的就不要重复造轮子
+- 必须用中文回复用户

@@ -16,6 +16,10 @@ class TraceCallbackHandler(BaseCallbackHandler):
 
     注意：本 handler 的 start/end 回调中会直接读写 Tracer，
     Tracer 维护了 '当前 span' 栈，确保嵌套关系正确。
+
+    支持两种模式：
+    - 独立模式：创建自己的 Tracer 实例（用于主 agent）
+    - 共享模式：传入外部 Tracer（用于 sub-agent，共享父 agent 的 span 栈）
     """
 
     def __init__(
@@ -23,15 +27,17 @@ class TraceCallbackHandler(BaseCallbackHandler):
         store: TraceStore,
         session_id: str = "",
         session_turn: int = 0,
+        tracer: Tracer | None = None,
     ) -> None:
         super().__init__()
         self.store = store
         self.session_id = session_id
         self.session_turn = session_turn
-        self._tracer: Tracer | None = None
+        self._tracer: Tracer | None = tracer  # 外部传入的 tracer（共享模式）
         self._trace_id: str = ""
         self._run_id_to_span_id: dict[uuid.UUID, str] = {}
         self._has_root = False
+        self._is_shared = tracer is not None  # 共享模式下不创建 root span
 
     def _ensure_tracer(self) -> Tracer:
         if self._tracer is None:
@@ -58,6 +64,9 @@ class TraceCallbackHandler(BaseCallbackHandler):
         *, run_id: uuid.UUID, parent_run_id: uuid.UUID | None = None,
         **kwargs: Any,
     ) -> Any:
+        # 共享模式下不创建 chain span（sub-agent 的 span 直接挂在父 tracer 的当前栈顶下）
+        if self._is_shared:
+            return
         tracer = self._ensure_tracer()
         user_message = ""
         if not self._has_root:
@@ -90,7 +99,8 @@ class TraceCallbackHandler(BaseCallbackHandler):
             tracer.end_span(span_id)
             span = tracer._spans.get(span_id)
             if span:
-                self.store.write_span(span)
+                if not self._is_shared:
+                    self.store.write_span(span)
 
     def on_chain_error(
         self, error: Exception,
@@ -104,7 +114,8 @@ class TraceCallbackHandler(BaseCallbackHandler):
             tracer.end_span(span_id, status="error", error_message=str(error))
             span = tracer._spans.get(span_id)
             if span:
-                self.store.write_span(span)
+                if not self._is_shared:
+                    self.store.write_span(span)
 
     # ── LLM ──
 
@@ -156,7 +167,8 @@ class TraceCallbackHandler(BaseCallbackHandler):
             tracer.end_span(span_id, status="error", error_message=str(error))
             span = tracer._spans.get(span_id)
             if span:
-                self.store.write_span(span)
+                if not self._is_shared:
+                    self.store.write_span(span)
 
     # ── Tool ──
 
@@ -185,7 +197,8 @@ class TraceCallbackHandler(BaseCallbackHandler):
             tracer.end_span(span_id)
             span = tracer._spans.get(span_id)
             if span:
-                self.store.write_span(span)
+                if not self._is_shared:
+                    self.store.write_span(span)
 
     def on_tool_error(
         self, error: Exception,
@@ -199,4 +212,5 @@ class TraceCallbackHandler(BaseCallbackHandler):
             tracer.end_span(span_id, status="error", error_message=str(error))
             span = tracer._spans.get(span_id)
             if span:
-                self.store.write_span(span)
+                if not self._is_shared:
+                    self.store.write_span(span)

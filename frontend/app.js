@@ -209,20 +209,15 @@ function initPanelMode(panelName) {
 
   // ── 关闭：按钮 / Escape ─────────────────
   const close = () => {
-    // 不管 compressCurrentSession 是否完成，最多等 2 秒就关闭
-    let closed = false;
-    const doClose = () => {
-      if (closed) return;
-      closed = true;
-      if (window.api && window.api.closePanel) {
-        window.api.closePanel();
-      } else {
-        // 浏览器模式或无 API 时直接关闭
-        window.close();
-      }
-    };
-    compressCurrentSession().then(doClose).catch(doClose);
-    setTimeout(doClose, 2000); // 2 秒超时强制关闭
+    // fire-and-forget: 压缩记忆不阻塞关闭
+    if (window.api && window.api.compressSession && chatThreadId) {
+      window.api.compressSession(chatThreadId).catch(() => {});
+    }
+    if (window.api && window.api.closePanel) {
+      window.api.closePanel();
+    } else {
+      window.close();
+    }
   };
 
   // 委托监听所有 panel-header 中的关闭按钮
@@ -446,11 +441,43 @@ function _bindChatListeners() {
       }
       return;
     }
+    // 点击 checkbox — 不触发导航，更新批量删除按钮状态
+    if (e.target.classList.contains('session-checkbox')) {
+      updateBatchDeleteBtn();
+      return;
+    }
     const item = e.target.closest('.session-item');
     if (!item) return;
     const threadId = item.dataset.threadId;
     if (threadId) openChat(threadId);
   });
+
+  // ── 全选 checkbox ──
+  const selectAllCb = document.getElementById('select-all-sessions');
+  if (selectAllCb) {
+    selectAllCb.addEventListener('change', () => {
+      const checked = selectAllCb.checked;
+      document.querySelectorAll('.session-checkbox:not(#select-all-sessions)').forEach(cb => { cb.checked = checked; });
+      updateBatchDeleteBtn();
+    });
+  }
+
+  // ── 批量删除按钮 ──
+  const batchDeleteBtn = document.getElementById('batch-delete-btn');
+  if (batchDeleteBtn) {
+    batchDeleteBtn.addEventListener('click', async () => {
+      const ids = _getSelectedSessionIds();
+      if (ids.length === 0) return;
+      const ok = await confirmDelete(`确定要删除选中的 ${ids.length} 个会话吗？`);
+      if (!ok) return;
+      try {
+        await window.api.deleteSessionsBatch(ids);
+        loadSessionList();
+      } catch (e) {
+        console.error('Batch delete failed', e);
+      }
+    });
+  }
 
   // ── 新建会话 → 创建 thread 后打开聊天视图 ──
   document.getElementById('new-session').addEventListener('click', async () => {
@@ -490,6 +517,27 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function formatRelativeTime(dateStr) {
+  if (!dateStr) return '';
+  const now = new Date();
+  const date = new Date(dateStr);
+  const diffMs = now - date;
+  const diffSec = Math.floor(diffMs / 1000);
+  const diffMin = Math.floor(diffSec / 60);
+  const diffHour = Math.floor(diffMin / 60);
+  const diffDay = Math.floor(diffHour / 24);
+
+  if (diffSec < 60) return '刚刚';
+  if (diffMin < 60) return diffMin + '分钟前';
+  if (diffHour < 24) return diffHour + '小时前';
+  if (diffDay === 1) return '昨天';
+  if (diffDay < 7) return diffDay + '天前';
+  // 超过一周显示具体日期
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  return month + '/' + day;
 }
 
 function processInline(text) {
@@ -646,22 +694,56 @@ async function loadSessionList() {
   try {
     const sessions = await window.api.getSessions();
     const list = document.getElementById('session-list');
+    const toolbar = document.getElementById('session-toolbar');
     if (!sessions || sessions.length === 0) {
       list.innerHTML = '<div class="empty-state">暂无会话</div>';
+      if (toolbar) toolbar.classList.add('hidden');
       return;
     }
+    if (toolbar) toolbar.classList.remove('hidden');
+
     list.innerHTML = sessions
       .map(
-        (s) =>
-          `<div class="session-item" data-thread-id="${escapeHtml(s.thread_id)}">
-            <div class="session-id">${escapeHtml(s.thread_id.slice(0, 8))}...</div>
-            <div class="session-meta">${escapeHtml(s.created_at)} · ${s.turn_count} 轮</div>
+        (s) => {
+          const preview = (s.last_message || '').slice(0, 50);
+          const time = formatRelativeTime(s.created_at);
+          return `<div class="session-item" data-thread-id="${escapeHtml(s.thread_id)}">
+            <input type="checkbox" class="session-checkbox" data-thread-id="${escapeHtml(s.thread_id)}">
+            <div class="session-info">
+              <div class="session-preview${preview ? '' : ' empty'}">${escapeHtml(preview) || '(空对话)'}</div>
+              <div class="session-meta">${time} · ${s.turn_count} 轮</div>
+            </div>
             <button class="session-delete-btn" title="删除此会话">&times;</button>
-          </div>`
+          </div>`;
+        }
       )
       .join('');
+
+    // 重置全选状态
+    const selectAll = document.getElementById('select-all-sessions');
+    if (selectAll) selectAll.checked = false;
+    updateBatchDeleteBtn();
   } catch (e) {
     console.error('Failed to load sessions', e);
+  }
+}
+
+function _getSelectedSessionIds() {
+  const checkboxes = document.querySelectorAll('.session-checkbox:checked:not(#select-all-sessions)');
+  return Array.from(checkboxes).map(cb => cb.dataset.threadId);
+}
+
+function updateBatchDeleteBtn() {
+  const btn = document.getElementById('batch-delete-btn');
+  const selectAll = document.getElementById('select-all-sessions');
+  const checkedCount = _getSelectedSessionIds().length;
+  const totalCount = document.querySelectorAll('.session-checkbox:not(#select-all-sessions)').length;
+  if (btn) {
+    btn.disabled = checkedCount === 0;
+    btn.textContent = checkedCount > 0 ? `删除选中 (${checkedCount})` : '删除选中';
+  }
+  if (selectAll) {
+    selectAll.checked = totalCount > 0 && checkedCount === totalCount;
   }
 }
 
@@ -707,7 +789,8 @@ function backToSessionList() {
 
 async function loadMessages(threadId) {
   try {
-    const messages = await window.api.getMessages(threadId);
+    // 历史模式：不展示工具调用内容，仅保留 human/ai 文本对话
+    const messages = await window.api.getMessages(threadId, { include_tool_calls: false });
     const container = document.getElementById('chat-messages');
     container.innerHTML = '';
 
@@ -720,6 +803,7 @@ async function loadMessages(threadId) {
     for (const msg of messages) {
       // 历史只展示 human/ai 对话，不展示工具调用、system 等中间消息
       if (msg.role !== 'human' && msg.role !== 'ai') continue;
+      if (!msg.content || !msg.content.trim()) continue;
       addMessageBubble(msg.role, msg.content);
     }
     scrollChatToBottom();
@@ -957,24 +1041,57 @@ function confirmDelete(message) {
 
 // ── 工具面板 ──────────────────────────────────────────────────────────
 
-// ── 工具分类配置 ──
-const TOOL_CATEGORIES = [
-  { key: 'system',  label: '系统操作', icon: '💻', color: '#f87171', match: ['shell', 'file_operations', 'write_file'] },
-  { key: 'code',    label: '代码执行', icon: '🐍', color: '#38bdf8', match: ['run_python', 'calculator'] },
-  { key: 'web',     label: '网络信息', icon: '🌐', color: '#f59e0b', match: ['web_search', 'hot_search', 'web_fetch', 'weather', 'current_time'] },
-  { key: 'skill',   label: '技能管理', icon: '📦', color: '#f472b6', match: ['install_skill', 'uninstall_skill', 'list_registry', 'list_skills', 'delegate_task'] },
-  { key: 'other',   label: '其他',     icon: '🔧', color: '#9ca3af', match: [] },
-];
+// ── 工具分类显示配置（key 来自 Python 源码 __category__）──
+const CATEGORY_CONFIG = {
+  file_system:    { label: '文件系统', initials: 'FILE', color: '#fb923c' },
+  web:            { label: '网络信息', initials: 'WEB', color: '#f59e0b' },
+  code_execution: { label: '代码执行', initials: 'CODE', color: '#f87171' },
+  computation:    { label: '计算工具', initials: 'MATH', color: '#38bdf8' },
+  system:         { label: '系统管理', initials: 'SYS', color: '#a78bfa' },
+  agent:          { label: 'Agent',    initials: 'AGT', color: '#34d399' },
+};
+const CATEGORY_ORDER = ['file_system', 'web', 'code_execution', 'computation', 'system', 'agent'];
 
-function getToolCategory(toolName) {
-  const name = toolName.toLowerCase();
-  return TOOL_CATEGORIES.find(c => c.match.some(m => name.includes(m))) || TOOL_CATEGORIES.find(c => c.key === 'other');
+function getCategoryConfig(key) {
+  return CATEGORY_CONFIG[key] || { label: key || '其他', initials: '···', color: '#9ca3af' };
 }
 
 function getToolFileName(tool) {
   const f = tool.file || '';
   const parts = f.replace(/\\/g, '/').split('/');
   return parts.slice(-2).join('/');
+}
+
+// ── 自定义 hover tooltip（贴合暗色主题）──
+let tooltipEl = null;
+
+function ensureTooltip() {
+  if (!tooltipEl) {
+    tooltipEl = document.createElement('div');
+    tooltipEl.className = 'tooltip-floating hidden';
+    document.body.appendChild(tooltipEl);
+  }
+  return tooltipEl;
+}
+
+function showTooltip(text, anchorEl) {
+  const tip = ensureTooltip();
+  tip.textContent = text;
+  tip.classList.remove('hidden');
+  requestAnimationFrame(() => {
+    const rect = anchorEl.getBoundingClientRect();
+    const tipR = tip.getBoundingClientRect();
+    let left = rect.left;
+    let top = rect.bottom + 4;
+    if (left + tipR.width > window.innerWidth - 8) left = rect.right - tipR.width;
+    if (top + tipR.height > window.innerHeight - 8) top = rect.top - tipR.height - 4;
+    tip.style.left = left + 'px';
+    tip.style.top = top + 'px';
+  });
+}
+
+function hideTooltip() {
+  if (tooltipEl) tooltipEl.classList.add('hidden');
 }
 
 async function setupToolsPanel() {
@@ -986,46 +1103,62 @@ async function setupToolsPanel() {
       return;
     }
 
-    // 按分类分组
+    // 按分类分组（category 来自 Python 源码 __category__）
     const grouped = {};
     for (const t of tools) {
-      const cat = getToolCategory(t.name);
-      const key = cat.key;
-      if (!grouped[key]) grouped[key] = { cat, tools: [] };
-      grouped[key].tools.push(t);
+      const key = t.category || '';
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(t);
     }
 
-    // 保持分类定义顺序
-    const order = TOOL_CATEGORIES.map(c => c.key);
-    const sortedKeys = [...new Set([...order.filter(k => grouped[k]), ...Object.keys(grouped)])];
+    // 保持分类定义顺序，未定义的排到最后
+    const sortedKeys = [...new Set([...CATEGORY_ORDER.filter(k => grouped[k]), ...Object.keys(grouped)])];
 
     let html = '';
     for (const key of sortedKeys) {
-      const group = grouped[key];
-      if (!group) continue;
-      const { cat, tools: groupTools } = group;
-      html += `<div class="tool-category">
-        <div class="tool-category-header">
-          <span class="tool-category-icon">${cat.icon}</span>
-          <span class="tool-category-label">${cat.label}</span>
-          <span class="tool-category-count">${groupTools.length}</span>
+      const groupTools = grouped[key];
+      if (!groupTools || !groupTools.length) continue;
+      const cfg = getCategoryConfig(key);
+      html += `<div class="tool-group" data-cat="${key}">
+        <div class="tool-group-header" style="border-color:${cfg.color};">
+          <span class="tool-group-arrow">▸</span>
+          <span class="tool-group-icon" style="background:${cfg.color};">${cfg.initials}</span>
+          <span class="tool-group-name">${cfg.label}</span>
+          <span class="tool-group-count">${groupTools.length}</span>
         </div>
-        <div class="tool-category-grid">`;
+        <div class="tool-group-items">`;
       for (const t of groupTools) {
         const fileName = getToolFileName(t);
         html += `<div class="tool-card">
           <div class="tool-card-header">
-            <span class="tool-card-badge" style="background:${cat.color}22;color:${cat.color};">${cat.icon} ${cat.label}</span>
+            <span class="tool-card-badge" style="background:${cfg.color}22;color:${cfg.color};">${cfg.initials}</span>
             <span class="tool-card-file" title="${escapeHtml(t.file || '')}">${escapeHtml(fileName)}</span>
           </div>
           <div class="tool-card-name">${escapeHtml(t.name)}</div>
-          <div class="tool-card-desc">${escapeHtml(t.description || '无描述')}</div>
+          <div class="tool-card-desc" data-full="${escapeHtml(t.description || '无描述')}">${escapeHtml(t.description || '无描述')}</div>
         </div>`;
       }
       html += `</div></div>`;
     }
 
     grid.innerHTML = html;
+
+    // ── 分类展开/收起 ──
+    grid.querySelectorAll('.tool-group-header').forEach(header => {
+      header.addEventListener('click', () => {
+        header.parentElement.classList.toggle('collapsed');
+      });
+    });
+
+    // ── 描述 hover tooltip（仅截断时显示，固定位置）──
+    grid.querySelectorAll('.tool-card-desc').forEach(desc => {
+      desc.addEventListener('mouseenter', () => {
+        if (desc.scrollHeight > desc.clientHeight) {
+          showTooltip(desc.getAttribute('data-full') || desc.textContent, desc);
+        }
+      });
+      desc.addEventListener('mouseleave', hideTooltip);
+    });
   } catch (e) {
     console.error('Failed to load tools', e);
   }
@@ -1359,9 +1492,9 @@ async function loadTraces() {
         <div class="monitoring-trace-row" onclick="showTraceDetail('${t.trace_id}')">
           <span style="width:8px;height:8px;border-radius:50%;background:${t.status === 'error' ? '#f87171' : '#4ade80'};flex-shrink:0;"></span>
           <span style="font-size:12px;color:#ddd;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${t.user_message || t.trace_id.slice(0, 8)}</span>
-          <span style="font-size:10px;color:#888;white-space:nowrap;">${t.started_at ? t.started_at.slice(5, 19).replace('T', ' ') : ''}</span>
-          <span style="font-size:11px;color:#a29bfe;white-space:nowrap;">${totalTk >= 1000 ? (totalTk / 1000).toFixed(1) + 'K' : totalTk} t</span>
-          <span style="font-size:11px;color:#888;white-space:nowrap;">${(t.duration_ms / 1000 || 0).toFixed(1)}s</span>
+          <span style="font-size:10px;color:#888;white-space:nowrap;">${formatTime(t.started_at)}</span>
+          <span style="font-size:11px;color:#a29bfe;white-space:nowrap;">${formatTokens(totalTk)} t</span>
+          <span style="font-size:11px;color:#888;white-space:nowrap;">${formatDuration(t.duration_ms || 0)}</span>
           <span class="monitoring-badge ${t.status === 'error' ? 'error' : 'success'}">${t.status === 'error' ? '失败' : '完成'}</span>
         </div>`;
       }).join('');
@@ -1408,18 +1541,20 @@ async function loadTraces() {
   sortField.addEventListener('change', (e) => {
     traceState.sortField = e.target.value;
     traceState.sortDir = 'desc';
-    sortDirBtn.textContent = '↓ 降序';
+    sortDirBtn.textContent = '▼ 降序';
     sortDirBtn.title = '降序';
     doSearch();
   });
   sortDirBtn.addEventListener('click', () => {
     traceState.sortDir = traceState.sortDir === 'desc' ? 'asc' : 'desc';
-    sortDirBtn.textContent = traceState.sortDir === 'desc' ? '↓ 降序' : '↑ 升序';
+    sortDirBtn.textContent = traceState.sortDir === 'desc' ? '▼ 降序' : '▲ 升序';
     sortDirBtn.title = traceState.sortDir === 'desc' ? '降序' : '升序';
     doSearch();
   });
   doSearch();
 }
+
+let tokenRankState = { reversed: false };
 
 async function loadTokenStats() {
   const container = document.getElementById('monitoring-tokens');
@@ -1427,57 +1562,26 @@ async function loadTokenStats() {
   try {
     const [stats, topTraces] = await Promise.all([
       window.api.getTraceStats(),
-      window.api.getTokenTopTraces(14, 20)
+      window.api.getTokenTopTraces(7, 20)
     ]);
-    const totalInput = stats.total_input_tokens || 0;
-    const totalOutput = stats.total_output_tokens || 0;
-    const totalTokens = totalInput + totalOutput;
+    const totalInput = stats.all_time_input_tokens || stats.total_input_tokens || 0;
+    const totalOutput = stats.all_time_output_tokens || stats.total_output_tokens || 0;
 
-    let rankingHtml = '';
-    if (topTraces && topTraces.length > 0) {
-      rankingHtml = `
-        <div class="monitoring-card">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
-            <span style="font-size:13px;font-weight:600;color:#ddd;">Token 消耗排行（近14天 Top 20）</span>
-            <button class="monitoring-page-btn" id="token-ranking-reverse" title="反转排序">↑↓ 倒序</button>
-          </div>
-          <div id="token-ranking-list">
-            ${topTraces.map((t, i) => {
-              const tTokens = (t.total_tokens || 0);
-              const pct = totalTokens > 0 ? (tTokens / totalTokens * 100) : 0;
-              const rankColor = i === 0 ? '#fbbf24' : i === 1 ? '#d1d5db' : i === 2 ? '#d97706' : '#888';
-              const rankIcon = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`;
-              return `<div class="monitoring-trace-row" onclick="showTraceDetail('${t.trace_id}')" style="margin-bottom:6px;">
-                <span style="font-size:14px;width:24px;text-align:center;flex-shrink:0;">${rankIcon}</span>
-                <span style="font-size:12px;color:#ddd;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${t.user_message || t.trace_id.slice(0, 8)}</span>
-                <span style="font-size:10px;color:#888;">${t.started_at ? t.started_at.slice(5, 19).replace('T', ' ') : ''}</span>
-                <span style="font-size:11px;color:#a29bfe;font-weight:600;">${tTokens >= 1000 ? (tTokens / 1000).toFixed(1) + 'K' : tTokens}</span>
-                <span style="font-size:11px;color:#888;">${(t.duration_ms / 1000 || 0).toFixed(1)}s</span>
-                <div class="monitoring-progress-bar" style="width:60px;">
-                  <div class="monitoring-progress-fill" style="width:${pct}%;"></div>
-                </div>
-              </div>`;
-            }).join('')}
-          </div>
-        </div>
-      `;
-    }
-
-    // Build distribution from top traces
-    let distHtml = '';
-    if (topTraces && topTraces.length > 0) {
-      const maxTokens = Math.max(...topTraces.map(t => t.total_tokens || 0), 1);
-      distHtml = topTraces.slice(0, 12).map((t, i) => {
-        const tTokens = t.total_tokens || 0;
-        const pct = (tTokens / maxTokens * 100);
-        return `<div style="margin-bottom:10px;">
-          <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px;">
-            <span style="color:#aaa;">${t.user_message || 'Trace #' + (i + 1)}</span>
-            <span style="color:#888;">${tTokens >= 1000 ? (tTokens / 1000).toFixed(1) + 'K' : tTokens}</span>
-          </div>
-          <div class="monitoring-progress-bar">
-            <div class="monitoring-progress-fill" style="width:${pct}%;"></div>
-          </div>
+    function renderRanking(traces) {
+      if (!traces || traces.length === 0) {
+        return '<div style="text-align:center;padding:20px;color:#888;">暂无 Token 消耗数据，发送消息后即可统计分析</div>';
+      }
+      const display = tokenRankState.reversed ? [...traces].reverse() : traces;
+      return display.map((t, i) => {
+        const tTokens = (t.input_tokens || 0) + (t.output_tokens || 0);
+        const origIdx = tokenRankState.reversed ? display.length - 1 - i : i;
+        const rankStyle = origIdx === 0 ? 'color:#fbbf24;font-weight:700;' : origIdx === 1 ? 'color:#d1d5db;font-weight:600;' : origIdx === 2 ? 'color:#d97706;font-weight:600;' : 'color:#888;';
+        return `<div class="monitoring-trace-row" onclick="showTraceDetail('${t.trace_id}')" style="margin-bottom:6px;">
+          <span style="font-size:12px;width:28px;text-align:center;flex-shrink:0;${rankStyle}">#${origIdx + 1}</span>
+          <span style="font-size:12px;color:#ddd;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${t.user_message || t.trace_id.slice(0, 8)}</span>
+          <span style="font-size:10px;color:#888;">${formatTime(t.started_at)}</span>
+          <span style="font-size:11px;color:#a29bfe;font-weight:600;">${formatTokens(tTokens)}</span>
+          <span style="font-size:11px;color:#888;">${formatDuration(t.duration_ms || 0)}</span>
         </div>`;
       }).join('');
     }
@@ -1486,31 +1590,32 @@ async function loadTokenStats() {
       <div class="monitoring-stat-grid">
         <div class="monitoring-stat-box">
           <div class="monitoring-stat-label">累计输入 Token</div>
-          <div class="monitoring-stat-value" style="color:#a29bfe;">${totalInput >= 1000 ? (totalInput / 1000).toFixed(1) + 'K' : totalInput}</div>
+          <div class="monitoring-stat-value" style="color:#a29bfe;">${formatTokens(totalInput)}</div>
         </div>
         <div class="monitoring-stat-box">
           <div class="monitoring-stat-label">累计输出 Token</div>
-          <div class="monitoring-stat-value" style="color:#74b9ff;">${totalOutput >= 1000 ? (totalOutput / 1000).toFixed(1) + 'K' : totalOutput}</div>
+          <div class="monitoring-stat-value" style="color:#74b9ff;">${formatTokens(totalOutput)}</div>
         </div>
       </div>
-      ${distHtml ? `
       <div class="monitoring-card">
-        <div style="font-size:13px;font-weight:600;color:#ddd;margin-bottom:12px;">Token 分布（按会话）</div>
-        <div id="token-distribution">${distHtml}</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+          <span style="font-size:13px;font-weight:600;color:#ddd;">Token 消耗排行 (近 7 天 Top 20)</span>
+          <button class="monitoring-page-btn" id="token-ranking-reverse" title="反转排序">${tokenRankState.reversed ? '▲ 正序' : '▼ 倒序'}</button>
+        </div>
+        <div id="token-ranking-list">
+          ${renderRanking(topTraces)}
+        </div>
       </div>
-      ` : ''}
-      ${rankingHtml}
     `;
 
-    // Reverse toggle handler
     const reverseBtn = document.getElementById('token-ranking-reverse');
     if (reverseBtn) {
       reverseBtn.addEventListener('click', () => {
+        tokenRankState.reversed = !tokenRankState.reversed;
+        reverseBtn.textContent = tokenRankState.reversed ? '▲ 正序' : '▼ 倒序';
+        reverseBtn.title = tokenRankState.reversed ? '正序' : '倒序';
         const list = document.getElementById('token-ranking-list');
-        if (!list) return;
-        const rows = Array.from(list.children);
-        rows.reverse();
-        rows.forEach(row => list.appendChild(row));
+        if (list) list.innerHTML = renderRanking(topTraces);
       });
     }
   } catch (e) {
@@ -1518,11 +1623,12 @@ async function loadTokenStats() {
   }
 }
 
+let latencyState = { reversed: false };
+
 async function loadLatencyStats() {
   const container = document.getElementById('monitoring-latency');
   if (!container) return;
   try {
-    // Get spans to compute per-tool latency
     const traces = await window.api.getTraces(null, null, 50, 0);
     let toolLatencies = {};
     let toolCounts = {};
@@ -1543,26 +1649,48 @@ async function loadLatencyStats() {
       return;
     }
 
-    const maxAvg = Math.max(...toolNames.map(n => toolLatencies[n] / toolCounts[n]), 1);
+    function renderLatencyList() {
+      const sorted = [...toolNames]
+        .map(name => ({ name, avg: toolLatencies[name] / toolCounts[name], count: toolCounts[name] }))
+        .sort((a, b) => latencyState.reversed ? a.avg - b.avg : b.avg - a.avg);
+      const maxAvg = Math.max(...sorted.map(x => x.avg), 1);
+
+      return sorted.map(({ name, avg, count }) => {
+        const pct = (avg / maxAvg * 100);
+        return `<div style="margin-bottom:12px;">
+          <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px;">
+            <span style="color:#aaa;">${name}</span>
+            <span style="color:#888;">${formatDuration(avg)} (${count}次)</span>
+          </div>
+          <div class="monitoring-progress-bar">
+            <div class="monitoring-progress-fill" style="width:${pct}%;background:linear-gradient(90deg,#fbbf24,#f59e0b);"></div>
+          </div>
+        </div>`;
+      }).join('');
+    }
 
     container.innerHTML = `
       <div class="monitoring-card">
-        <div style="font-size:13px;font-weight:600;color:#ddd;margin-bottom:12px;">工具调用延迟分布</div>
-        ${toolNames.map(name => {
-          const avg = toolLatencies[name] / toolCounts[name];
-          const pct = (avg / maxAvg * 100);
-          return `<div style="margin-bottom:12px;">
-            <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px;">
-              <span style="color:#aaa;">${name}</span>
-              <span style="color:#888;">${(avg / 1000).toFixed(2)}s (${toolCounts[name]}次)</span>
-            </div>
-            <div class="monitoring-progress-bar">
-              <div class="monitoring-progress-fill" style="width:${pct}%;background:linear-gradient(90deg,#fbbf24,#f59e0b);"></div>
-            </div>
-          </div>`;
-        }).join('')}
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+          <span style="font-size:13px;font-weight:600;color:#ddd;">工具调用延迟分布</span>
+          <button class="monitoring-page-btn" id="latency-reverse-btn" title="反转排序">${latencyState.reversed ? '▲ 正序' : '▼ 倒序'}</button>
+        </div>
+        <div id="latency-list">
+          ${renderLatencyList()}
+        </div>
       </div>
     `;
+
+    const reverseBtn = document.getElementById('latency-reverse-btn');
+    if (reverseBtn) {
+      reverseBtn.addEventListener('click', () => {
+        latencyState.reversed = !latencyState.reversed;
+        reverseBtn.textContent = latencyState.reversed ? '▲ 正序' : '▼ 倒序';
+        reverseBtn.title = latencyState.reversed ? '正序' : '倒序';
+        const list = document.getElementById('latency-list');
+        if (list) list.innerHTML = renderLatencyList();
+      });
+    }
   } catch (e) {
     container.innerHTML = '<div style="text-align:center;padding:20px;color:#f87171;">加载失败</div>';
   }
@@ -1573,7 +1701,8 @@ async function loadCacheStats() {
   if (!container) return;
   try {
     const stats = await window.api.getTraceCacheStats();
-    const hitRate = stats.cache_hit_rate != null ? (stats.cache_hit_rate * 100).toFixed(1) : 0;
+    // cache_hit_rate is already a percentage (0-100) from the backend
+    const hitRate = stats.cache_hit_rate != null ? stats.cache_hit_rate : 0;
     const hitTokens = stats.total_cache_hit_tokens || 0;
     const missTokens = stats.total_cache_miss_tokens || 0;
     const totalCached = hitTokens + missTokens;
@@ -1587,36 +1716,31 @@ async function loadCacheStats() {
         </div>
         <div class="monitoring-stat-box">
           <div class="monitoring-stat-label">命中 Token</div>
-          <div class="monitoring-stat-value" style="color:#4ade80;">${hitTokens >= 1000 ? (hitTokens / 1000).toFixed(1) + 'K' : hitTokens}</div>
+          <div class="monitoring-stat-value" style="color:#4ade80;">${formatTokens(hitTokens)}</div>
         </div>
         <div class="monitoring-stat-box">
           <div class="monitoring-stat-label">未命中 Token</div>
-          <div class="monitoring-stat-value" style="color:#f87171;">${missTokens >= 1000 ? (missTokens / 1000).toFixed(1) + 'K' : missTokens}</div>
+          <div class="monitoring-stat-value" style="color:#f87171;">${formatTokens(missTokens)}</div>
         </div>
         <div class="monitoring-stat-box">
-          <div class="monitoring-stat-label">总缓存 Token</div>
-          <div class="monitoring-stat-value">${totalCached >= 1000 ? (totalCached / 1000).toFixed(1) + 'K' : totalCached}</div>
+          <div class="monitoring-stat-label">总计 Token</div>
+          <div class="monitoring-stat-value">${formatTokens(totalCached)}</div>
         </div>
       </div>
       <div class="monitoring-card">
         <div style="font-size:13px;font-weight:600;color:#ddd;margin-bottom:12px;">缓存命中分布</div>
         <div style="display:flex;height:24px;border-radius:6px;overflow:hidden;background:#2a2a42;">
           ${totalCached > 0 ? `
-            <div style="width:${hitRate}%;background:linear-gradient(90deg,#22c55e,#4ade80);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:#fff;min-width:${hitRate > 0 ? '40px' : '0'};">命中 ${hitRate}%</div>
+            <div style="width:${hitRate}%;background:linear-gradient(90deg,#22c55e,#4ade80);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:#fff;min-width:${hitRate > 10 ? '60px' : '30px'};">命中 ${hitRate}%</div>
             <div style="flex:1;background:linear-gradient(90deg,#ef4444,#f87171);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:#fff;">未命中 ${(100 - hitRate).toFixed(1)}%</div>
-          ` : '<div style="width:100%;display:flex;align-items:center;justify-content:center;font-size:11px;color:#888;">暂无缓存数据</div>'}
+          ` : '<div style="width:100%;display:flex;align-items:center;justify-content:center;font-size:11px;color:#888;">暂无缓存数据 (需要 LLM 返回 usage_metadata)</div>'}
         </div>
       </div>
       <div class="monitoring-card">
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;font-size:12px;">
-          <div style="display:flex;justify-content:space-between;padding:8px 12px;background:#1a1a2e;border-radius:6px;">
-            <span style="color:#8888aa;">缓存 LLM 调用数</span>
-            <span style="color:#ccc;font-weight:600;">${stats.cached_llm_calls || 0}</span>
-          </div>
-          <div style="display:flex;justify-content:space-between;padding:8px 12px;background:#1a1a2e;border-radius:6px;">
-            <span style="color:#8888aa;">节省估算</span>
-            <span style="color:#4ade80;font-weight:600;">${hitTokens >= 1000 ? (hitTokens / 1000).toFixed(1) + 'K tokens' : hitTokens + ' tokens'}</span>
-          </div>
+        <div style="font-size:12px;color:#8888aa;line-height:1.6;">
+          缓存数据来自 LLM 返回的 <code style="background:#2a2a42;padding:2px 6px;border-radius:3px;">usage_metadata</code>，
+          包含 <code>prompt_cache_hit_tokens</code> 和 <code>prompt_cache_miss_tokens</code>。
+          仅 DeepSeek 等支持 Prompt Caching 的模型会返回此数据。
         </div>
       </div>
     `;
@@ -1640,6 +1764,7 @@ async function showTraceDetail(traceId) {
     const errorCount = spans.filter(s => s.status === 'error').length;
     const toolCount = spans.filter(s => s.span_type === 'tool_call').length;
     const llmCount = spans.filter(s => s.span_type === 'llm_call').length;
+    const delegateCount = spans.filter(s => s.span_type === 'delegate_task').length;
 
     // Helper: format JSON content nicely
     function formatIOContent(raw, kind) {
@@ -1674,7 +1799,7 @@ async function showTraceDetail(traceId) {
       return `
         <div class="trace-io-panel" id="io-panel-${span.span_id}-${ioType}" style="display:none;">
           <div class="trace-io-panel-header">
-            <span>${span.span_type === 'llm_call' ? 'LLM' : 'Tool'} ${label}</span>
+            <span>${span.span_type === 'llm_call' ? 'LLM' : span.span_type === 'delegate_task' ? '子Agent' : 'Tool'} ${label}</span>
             ${copyBtn(contentId)}
           </div>
           <div class="trace-io-content" id="${contentId}">${formatIOContent(raw)}</div>
@@ -1682,17 +1807,21 @@ async function showTraceDetail(traceId) {
       `;
     }
 
-    // Waterfall timeline
+    // Waterfall timeline (enhanced: nesting, time axis, grid, tooltips)
     function renderWaterfall(spans) {
       if (!spans || spans.length === 0) return '';
+
+      // 1. Flatten tree with depth for nesting display
       const flatSpans = [];
-      function collectFlat(node) {
+      function collectFlat(node, depth) {
         if (!node) return;
-        flatSpans.push(node);
-        (node.children || []).forEach(collectFlat);
+        flatSpans.push({ ...node, _depth: depth });
+        (node.children || []).forEach(c => collectFlat(c, depth + 1));
       }
-      collectFlat(root);
+      collectFlat(root, 0);
       if (flatSpans.length === 0) return '';
+
+      // 2. Compute time range
       const timestamps = flatSpans.map(s => {
         const ts = s.started_at ? new Date(s.started_at).getTime() : 0;
         return { ts, dur: s.duration_ms || 0 };
@@ -1701,24 +1830,118 @@ async function showTraceDetail(traceId) {
       const earliest = Math.min(...timestamps.map(t => t.ts));
       const latest = Math.max(...timestamps.map(t => t.ts + t.dur));
       const totalRange = latest - earliest || 1;
-      return `
-        <div class="trace-waterfall">
-          <div class="trace-waterfall-title">时间线</div>
-          ${flatSpans.slice(0, 30).map(s => {
-            const ts = s.started_at ? new Date(s.started_at).getTime() : 0;
-            if (!ts) return '';
-            const offset = (ts - earliest) / totalRange * 100;
-            const width = Math.max((s.duration_ms || 0) / totalRange * 100, 1);
-            const typeClass = s.span_type === 'llm_call' ? 'llm' : s.span_type === 'tool_call' ? 'tool' : s.span_type === 'session_turn' ? 'session' : 'step';
-            return `
-            <div class="trace-waterfall-row">
-              <span class="trace-waterfall-label">${s.span_type === 'llm_call' ? (s.model || 'LLM') : s.span_type === 'tool_call' ? (s.tool_name || 'tool') : s.span_type}</span>
-              <div class="trace-waterfall-track">
-                <div class="trace-waterfall-bar ${typeClass}" style="left:${offset}%;width:${width}%;"></div>
+
+      // 3. Auto-calculate nice tick interval
+      const totalMs = totalRange;
+      let tickInterval;
+      if (totalMs <= 500) tickInterval = 100;
+      else if (totalMs <= 2000) tickInterval = 500;
+      else if (totalMs <= 5000) tickInterval = 1000;
+      else if (totalMs <= 30000) tickInterval = 5000;
+      else tickInterval = 10000;
+
+      const ticks = [];
+      for (let t = 0; t <= totalMs + tickInterval; t += tickInterval) {
+        ticks.push(Math.min(t, totalMs));
+      }
+      // Deduplicate last tick
+      if (ticks.length >= 2 && ticks[ticks.length - 1] === ticks[ticks.length - 2]) {
+        ticks.pop();
+      }
+
+      // 4. Label width based on max depth (base 120 + 16px per indent level)
+      const maxDepth = Math.max(...flatSpans.map(s => s._depth || 0), 0);
+      const labelWidth = Math.min(120 + maxDepth * 16, 280);
+
+      // 5. Tick formatter
+      function formatTick(ms) {
+        if (ms >= 1000) return (ms / 1000).toFixed(1).replace(/\.0$/, '') + 's';
+        return ms + 'ms';
+      }
+
+      // 6. Tick HTML for ruler
+      const tickHtml = ticks.map(t => {
+        const pct = (t / totalRange) * 100;
+        return `<span class="trace-waterfall-tick" style="left:${pct}%;">${formatTick(t)}</span>`;
+      }).join('');
+
+      // 7. Grid lines (identical for each track row, pre-computed)
+      const gridHtml = ticks.map(t => {
+        const pct = (t / totalRange) * 100;
+        return `<div class="trace-waterfall-grid" style="left:${pct}%;"></div>`;
+      }).join('');
+
+      // 8. Render rows
+      const rows = flatSpans.map(s => {
+        const ts = s.started_at ? new Date(s.started_at).getTime() : 0;
+        if (!ts) return '';
+        const offset = (ts - earliest) / totalRange * 100;
+        const width = Math.max((s.duration_ms || 0) / totalRange * 100, 0.4);
+        const depth = s._depth || 0;
+
+        const typeClass = s.span_type === 'llm_call' ? 'llm'
+          : s.span_type === 'tool_call' ? 'tool'
+          : s.span_type === 'delegate_task' ? 'delegate'
+          : s.span_type === 'session_turn' ? 'session' : 'step';
+
+        const icon = s.span_type === 'session_turn' ? '&#9654;'
+          : s.span_type === 'llm_call' ? '&#9679;'
+          : s.span_type === 'agent_step' ? '&#9632;'
+          : s.span_type === 'delegate_task' ? '&#9881;'
+          : s.span_type === 'tool_call' ? '&#9670;' : '&#9654;';
+
+        const name = s.span_type === 'llm_call' ? (s.model || 'LLM')
+          : s.span_type === 'tool_call' ? (s.tool_name || 'tool')
+          : s.span_type === 'delegate_task' ? '子Agent'
+          : s.span_type === 'session_turn' ? '会话'
+          : s.span_type === 'agent_step' ? 'Agent' : s.span_type;
+
+        const startTime = s.started_at ? new Date(s.started_at).toLocaleTimeString() : '';
+        const dur = formatDuration(s.duration_ms || 0);
+
+        return `
+        <div class="trace-waterfall-row">
+          <div class="trace-waterfall-label" style="padding-left:${8 + depth * 14}px;">
+            <span class="wf-icon">${icon}</span>
+            <span class="wf-name" title="${name}">${name}</span>
+          </div>
+          <div class="trace-waterfall-track">
+            ${gridHtml}
+            <div class="trace-waterfall-bar ${typeClass}"
+                 style="left:${offset}%;width:${width}%;">
+              <div class="trace-waterfall-tooltip">
+                <div style="font-weight:600;margin-bottom:3px;color:#fff;">${name}</div>
+                <div>开始: ${startTime}</div>
+                <div>耗时: ${dur}</div>
+                ${s.input_tokens || s.output_tokens ? `<div>Token: ${s.input_tokens || 0} 入 + ${s.output_tokens || 0} 出</div>` : ''}
+                ${s.status === 'error' ? '<div style="color:#f87171;">状态: 错误</div>' : ''}
               </div>
-              <span class="trace-waterfall-dur">${(s.duration_ms / 1000 || 0).toFixed(1)}s</span>
-            </div>`;
-          }).filter(Boolean).join('')}
+            </div>
+          </div>
+          <span class="trace-waterfall-dur">${dur}</span>
+        </div>`;
+      }).filter(Boolean).join('');
+
+      // 9. Inline legend
+      const legend = `
+        <div class="trace-waterfall-legend">
+          <span><span class="trace-waterfall-legend-dot" style="background:#8b5cf6;"></span>会话</span>
+          <span><span class="trace-waterfall-legend-dot" style="background:#3b82f6;"></span>LLM</span>
+          <span><span class="trace-waterfall-legend-dot" style="background:#10b981;"></span>Agent</span>
+          <span><span class="trace-waterfall-legend-dot" style="background:#f59e0b;"></span>工具</span>
+          <span><span class="trace-waterfall-legend-dot" style="background:#ec4899;"></span>子Agent</span>
+          <span style="margin-left:auto;color:#555;">缩进 = 嵌套深度</span>
+        </div>`;
+
+      return `
+        <div class="trace-waterfall" style="--wf-label-w:${labelWidth}px;">
+          <div class="trace-waterfall-header">
+            <span class="trace-waterfall-title">时间线 (Waterfall)</span>
+            <span class="trace-waterfall-hint">悬停色块查看详情</span>
+          </div>
+          <div class="trace-waterfall-ruler" style="--wf-label-w:${labelWidth}px;">${tickHtml}</div>
+          <div class="trace-waterfall-rows">${rows}</div>
+          ${legend}
         </div>
       `;
     }
@@ -1729,17 +1952,20 @@ async function showTraceDetail(traceId) {
       const typeLabel = node.span_type === 'session_turn' ? '会话'
         : node.span_type === 'llm_call' ? 'LLM'
         : node.span_type === 'agent_step' ? 'Agent'
+        : node.span_type === 'delegate_task' ? '子Agent'
         : node.span_type === 'tool_call' ? '工具' : node.span_type;
-      const typeIcon = node.span_type === 'session_turn' ? '▸'
-        : node.span_type === 'llm_call' ? '⚡'
-        : node.span_type === 'agent_step' ? '◆'
-        : node.span_type === 'tool_call' ? '🔧' : '▸';
+      const typeIcon = node.span_type === 'session_turn' ? '&gt;'
+        : node.span_type === 'llm_call' ? '*'
+        : node.span_type === 'agent_step' ? '-'
+        : node.span_type === 'delegate_task' ? '&diams;'
+        : node.span_type === 'tool_call' ? '#' : '&gt;';
       const nameInfo = node.span_type === 'llm_call' ? (node.model || '')
         : node.span_type === 'tool_call' ? node.tool_name || ''
+        : node.span_type === 'delegate_task' ? (node.tool_name || 'sub-agent')
         : node.span_type === 'session_turn' ? '' : (node.model || '');
       const tokenInfo = (node.input_tokens || node.output_tokens)
         ? `${node.input_tokens || 0}+${node.output_tokens || 0} t` : '';
-      const durInfo = node.duration_ms ? `${(node.duration_ms / 1000).toFixed(1)}s` : '';
+      const durInfo = node.duration_ms ? formatDuration(node.duration_ms) : '';
       const hasIO = (node.llm_input || node.llm_output || node.tool_input || node.tool_output);
       const hasError = node.status === 'error' && node.error_message;
       const spanId = node.span_id || 's' + Math.random().toString(36).slice(2, 8);
@@ -1747,7 +1973,7 @@ async function showTraceDetail(traceId) {
       const children = node.children || [];
 
       let html = `
-        <div class="trace-span-row ${node.span_type === 'session_turn' ? 'session' : node.span_type === 'llm_call' ? 'llm' : node.span_type === 'tool_call' ? 'tool' : 'step'} ${errorClass}" style="margin-left:${depth * 20}px;">
+        <div class="trace-span-row ${node.span_type === 'session_turn' ? 'session' : node.span_type === 'llm_call' ? 'llm' : node.span_type === 'tool_call' ? 'tool' : node.span_type === 'delegate_task' ? 'delegate' : 'step'} ${errorClass}" style="margin-left:${depth * 20}px;">
           <span class="trace-span-icon">${typeIcon}</span>
           <span class="trace-span-label">${typeLabel}${nameInfo ? ': ' + nameInfo : ''}</span>
           ${tokenInfo ? `<span style="font-size:10px;color:#888;white-space:nowrap;">${tokenInfo}</span>` : ''}
@@ -1755,8 +1981,8 @@ async function showTraceDetail(traceId) {
           <span class="monitoring-badge ${node.status === 'error' ? 'error' : 'success'}">${node.status === 'error' ? '失败' : '成功'}</span>
           ${hasIO ? `
             <span class="trace-span-io-summary">
-              ${(node.llm_input || node.tool_input) ? `<span class="trace-span-io-badge" onclick="event.stopPropagation();toggleIOPanel('${spanId}','input')">📥 Input</span>` : ''}
-              ${(node.llm_output || node.tool_output) ? `<span class="trace-span-io-badge" onclick="event.stopPropagation();toggleIOPanel('${spanId}','output')">📤 Output</span>` : ''}
+              ${(node.llm_input || node.tool_input) ? `<span class="trace-span-io-badge" onclick="event.stopPropagation();toggleIOPanel('${spanId}','input')">In</span>` : ''}
+              ${(node.llm_output || node.tool_output) ? `<span class="trace-span-io-badge" onclick="event.stopPropagation();toggleIOPanel('${spanId}','output')">Out</span>` : ''}
             </span>
           ` : ''}
         </div>
@@ -1768,7 +1994,7 @@ async function showTraceDetail(traceId) {
         ` : ''}
         ${hasError ? `
           <div class="trace-error-block">
-            <div class="trace-error-header">⚠️ 错误信息</div>
+            <div class="trace-error-header">Error</div>
             <div class="trace-error-stack">${node.error_message}</div>
           </div>
         ` : ''}
@@ -1785,29 +2011,25 @@ async function showTraceDetail(traceId) {
 
       ${root.user_message ? `
       <div class="trace-user-msg">
-        💬 ${root.user_message}
+        ${root.user_message}
       </div>
       ` : ''}
 
       <div class="trace-summary-bar">
-        <span class="trace-summary-item ${errorCount > 0 ? 'error' : 'ok'}">${errorCount > 0 ? '✗' : '✓'} ${detail.status || 'ok'}</span>
-        <span class="trace-summary-item" title="总耗时">⏱ ${(detail.total_duration_ms / 1000 || 0).toFixed(1)}s</span>
-        <span class="trace-summary-item" title="总 Token">🔢 ${detail.total_tokens || 0} tokens</span>
-        <span class="trace-summary-item" title="Span 数量">📊 ${spans.length} spans</span>
-        ${errorCount > 0 ? `<span class="trace-summary-item error">⚠️ ${errorCount} errors</span>` : ''}
+        <span class="trace-summary-item ${errorCount > 0 ? 'error' : 'ok'}">Status: ${errorCount > 0 ? 'ERR' : 'OK'} (${detail.status || 'ok'})</span>
+        <span class="trace-summary-item" title="总耗时">Time: ${formatDuration(detail.total_duration_ms || 0)}</span>
+        <span class="trace-summary-item" title="总 Token">Tokens: ${detail.total_tokens || 0}</span>
+        <span class="trace-summary-item" title="Span 数量">Spans: ${spans.length}</span>
+        ${errorCount > 0 ? `<span class="trace-summary-item error">Errors: ${errorCount}</span>` : ''}
       </div>
 
       ${renderWaterfall(spans)}
 
-      <div class="monitoring-legend">
-        <span><span class="monitoring-legend-dot" style="background:#8b5cf6;"></span> 会话</span>
-        <span><span class="monitoring-legend-dot" style="background:#3b82f6;"></span> LLM</span>
-        <span><span class="monitoring-legend-dot" style="background:#10b981;"></span> Agent</span>
-        <span><span class="monitoring-legend-dot" style="background:#f59e0b;"></span> 工具</span>
-      </div>
-
       <div class="monitoring-card">
-        <div style="font-size:13px;font-weight:600;color:#ddd;margin-bottom:8px;">调用树</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+          <span style="font-size:13px;font-weight:600;color:#ddd;">调用树</span>
+          <span style="font-size:9px;color:#555;" title="每层缩进 20px，表示 Span 的父子嵌套关系：最左为根节点，向右缩进表示更深层的子调用">缩进 = 父子嵌套层级</span>
+        </div>
         <div class="trace-span-tree">
           ${renderEnhancedTree(root, 0)}
         </div>
@@ -1817,11 +2039,11 @@ async function showTraceDetail(traceId) {
         <span class="trace-meta-label">Trace ID</span>
         <span class="trace-meta-value">${traceId}</span>
         <span class="trace-meta-label">开始时间</span>
-        <span class="trace-meta-value">${root.started_at || ''}</span>
+        <span class="trace-meta-value">${formatTime(root.started_at, true)}</span>
         <span class="trace-meta-label">Token 详情</span>
         <span class="trace-meta-value">输入 ${totalInput} + 输出 ${totalOutput} = ${detail.total_tokens || 0}</span>
         <span class="trace-meta-label">Span 统计</span>
-        <span class="trace-meta-value">${spans.length} 个（LLM: ${llmCount} / Tool: ${toolCount} / Error: ${errorCount}）</span>
+        <span class="trace-meta-value">${spans.length} 个（LLM: ${llmCount} / Tool: ${toolCount}${delegateCount > 0 ? ` / 子Agent: ${delegateCount}` : ''} / Error: ${errorCount}）</span>
       </div>
     `;
   } catch (e) {
@@ -1867,6 +2089,23 @@ function formatTokens(n) {
   if (n == null || n === 0) return '0';
   if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
   return String(n);
+}
+
+// ── Helper: format ISO timestamp to local time ──
+function formatTime(iso, full) {
+  if (!iso) return '';
+  try {
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    const y = d.getFullYear();
+    const mo = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const h = String(d.getHours()).padStart(2, '0');
+    const mi = String(d.getMinutes()).padStart(2, '0');
+    const s = String(d.getSeconds()).padStart(2, '0');
+    if (full) return `${y}-${mo}-${day} ${h}:${mi}:${s}`;
+    return `${mo}-${day} ${h}:${mi}`;
+  } catch (_) { return iso; }
 }
 
 

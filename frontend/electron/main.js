@@ -132,7 +132,7 @@ function createBallWindow() {
   ballWindow.on('closed', () => { ballWindow = null; });
 }
 
-// ── Panel Window（启动时预创建，show/hide 切换）────────────────
+// ── Panel Window（预创建，始终 shown，OS 层级透明度切换可见性）──
 
 function precreatePanelWindow() {
   const { width: screenW, height: screenH } = screen.getPrimaryDisplay().workArea;
@@ -141,26 +141,35 @@ function precreatePanelWindow() {
   panelWindow = new BrowserWindow({
     width: PANEL_W, height: PANEL_H,
     x, y,
-    frame: false, thickFrame: false, show: false,
-    backgroundColor: '#1e1e32',
+    frame: false, transparent: true, show: false,
+    skipTaskbar: true,
     paintWhenInitiallyHidden: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true, nodeIntegration: false, sandbox: false,
     },
   });
-  panelWindow.setBackgroundColor('#1e1e32');
   panelWindow.loadFile(path.join(__dirname, '..', 'index.html'), {
     query: { panel: 'chat' },
   });
-  // 预建窗口就绪后不立即显示，等用户点击菜单
+  // 就绪后 setOpacity(0) → show → 窗口不可见但 DWM 持有活跃 surface
   panelWindow.once('ready-to-show', () => {
-    // 保持隐藏，预建完成
+    panelWindow.setOpacity(0);
+    panelWindow.setIgnoreMouseEvents(true, { forward: true });
+    panelWindow.show();
   });
   panelWindow.on('close', (e) => {
-    // 用户点击关闭 → 隐藏而不是销毁
+    // 用户点击关闭 → OS 透明而不是 hide/destroy
     e.preventDefault();
-    panelWindow.hide();
+    panelWindow.webContents.executeJavaScript(`
+      document.documentElement.style.transition = 'none';
+      document.documentElement.style.opacity = '0';
+      document.body.style.transition = 'none';
+      document.body.style.opacity = '0';
+    `);
+    panelWindow.setOpacity(0);
+    panelWindow.setIgnoreMouseEvents(true, { forward: true });
+    panelWindow.setSkipTaskbar(true);
   });
   panelWindow.on('closed', () => { panelWindow = null; panelPreMaxBounds = null; });
 }
@@ -218,89 +227,92 @@ safeHandler('panel-drag-move', (_event, dx, dy) => {
   panelWindow.setPosition(nx, ny);
 });
 
-// 面板 show/hide（预建窗口，不再每次创建）
-safeHandler('open-panel', (_event, name) => {
+// 面板打开：OS 透明度恢复 + CSS 淡入（窗口始终 shown，不经过 hide 故无 DWM 缓存问题）
+safeHandler('open-panel', async (_event, name) => {
   if (!panelWindow) return;
   const { width: screenW, height: screenH } = screen.getPrimaryDisplay().workArea;
   const x = Math.round((screenW - PANEL_W) / 2);
   const y = Math.round((screenH - PANEL_H) / 2);
   panelWindow.setPosition(x, y);
   panelWindow.webContents.send('switch-panel', name);
-  panelWindow.show();
-  panelWindow.focus();
-});
-safeHandler('close-panel', () => { if (panelWindow) panelWindow.hide(); });
 
-// 双击标题栏切换最大化/还原 — 截图定格方案
-// resize 前截图 → 用截图覆盖窗口 → 干净 resize → 截图淡出揭示新内容。
-// 截图是静态 <img>，不依赖 GPU 合成层，不会触发黑闪。
+  // 确保 CSS 从 opacity:0 开始
+  await panelWindow.webContents.executeJavaScript(`
+    document.documentElement.style.opacity = '0';
+    document.documentElement.style.transition = 'none';
+    document.body.style.opacity = '0';
+    document.body.style.transition = 'none';
+  `);
+
+  // 恢复 OS 可见性和交互
+  panelWindow.setSkipTaskbar(false);
+  panelWindow.setIgnoreMouseEvents(false);
+  panelWindow.setOpacity(1);
+  panelWindow.focus();
+
+  // CSS 淡入
+  panelWindow.webContents.executeJavaScript(`
+    document.documentElement.style.transition = 'opacity 0.25s ease-out';
+    document.body.style.transition = 'opacity 0.25s ease-out';
+    document.documentElement.style.opacity = '1';
+    document.body.style.opacity = '1';
+  `);
+});
+// 面板关闭：OS 透明 + 忽略鼠标事件（窗口仍然 shown，DWM surface 保持活跃）
+safeHandler('close-panel', () => {
+  if (!panelWindow) return;
+  panelWindow.webContents.executeJavaScript(`
+    document.documentElement.style.transition = 'none';
+    document.documentElement.style.opacity = '0';
+    document.body.style.transition = 'none';
+    document.body.style.opacity = '0';
+  `);
+  panelWindow.setOpacity(0);
+  panelWindow.setIgnoreMouseEvents(true, { forward: true });
+  panelWindow.setSkipTaskbar(true);
+});
+
+// 双击标题栏切换最大化/还原
+// 透明度过渡掩盖 resize 跳变：变暗 → 单次 setBounds → 恢复
+// 所有延迟在主进程 await，不依赖 executeJavaScript 内嵌 Promise
 safeHandler('toggle-maximize', async () => {
   if (!panelWindow) return;
 
-  // ── 截图 + 放入遮罩层 ──
-  async function freezeFrame() {
-    try {
-      const image = await panelWindow.webContents.capturePage();
-      const dataUrl = image.toDataURL();
-      await panelWindow.webContents.executeJavaScript(`
-        (() => {
-          const img = document.createElement('img');
-          img.id = '_freeze-frame';
-          img.src = ${JSON.stringify(dataUrl)};
-          img.style.cssText = 'position:fixed;inset:0;z-index:99999;width:100%;height:100%;object-fit:fill;pointer-events:none;image-rendering:auto;';
-          document.body.appendChild(img);
-        })();
-      `);
-    } catch (err) {
-      // 截图失败时 fallback：瞬时隐藏 body 内容
-      logError('freezeFrame', err);
-      await panelWindow.webContents.executeJavaScript(`
-        document.body.style.opacity = '0';
-        document.body.style.transition = 'none';
-      `);
-    }
-  }
+  // Phase 1: 变暗（无模糊，纯透明度）
+  await panelWindow.webContents.executeJavaScript(`
+    document.body.style.transition = 'opacity 0.15s ease-in';
+    document.body.style.opacity = '0';
+  `);
+  await new Promise(r => setTimeout(r, 180));
 
-  // ── 移除遮罩层（淡出动画） ──
-  async function unfreezeFrame() {
-    await panelWindow.webContents.executeJavaScript(`
-      (() => {
-        const el = document.getElementById('_freeze-frame');
-        if (el) {
-          el.style.transition = 'opacity 0.55s cubic-bezier(0.22,0.61,0.36,1)';
-          el.style.opacity = '0';
-          setTimeout(() => el.remove(), 600);
-        } else {
-          document.body.style.transition = 'opacity 0.35s ease-out';
-          document.body.style.opacity = '1';
-        }
-      })();
-    `);
-  }
-
+  // Phase 2: 单次 setBounds（同步，瞬间完成）
   if (panelPreMaxBounds) {
-    // ── 还原（全屏 → 小窗） ──
-    await freezeFrame();
     panelWindow.setBounds(panelPreMaxBounds);
     panelPreMaxBounds = null;
-    // 等渲染器完成小窗尺寸重绘
-    await new Promise(r => setTimeout(r, 200));
-    await unfreezeFrame();
-
   } else {
-    // ── 最大化（小窗 → 全屏） ──
     const display = screen.getPrimaryDisplay();
     if (!display) return;
     const b = panelWindow.getBounds();
     panelPreMaxBounds = { x: b.x, y: b.y, width: b.width, height: b.height };
     const { x, y, width, height } = display.workArea;
-
-    await freezeFrame();
-    // 单次干净 resize，不步进
     panelWindow.setBounds({ x, y, width, height });
-    // 给渲染器足够时间完成新尺寸的首帧绘制
-    await new Promise(r => setTimeout(r, 250));
-    await unfreezeFrame();
+  }
+
+  // Phase 3: 等待渲染器在新尺寸下完成首帧绘制
+  await new Promise(r => setTimeout(r, 150));
+
+  // Phase 4: 恢复（无模糊，纯透明度）
+  await panelWindow.webContents.executeJavaScript(`
+    document.body.style.transition = 'opacity 0.3s ease-out';
+    document.body.style.opacity = '1';
+  `);
+  await new Promise(r => setTimeout(r, 350));
+
+  // 清理 transition 样式，避免影响后续交互
+  if (panelWindow) {
+    panelWindow.webContents.executeJavaScript(
+      "document.body.style.transition = ''"
+    ).catch(() => {});
   }
 });
 

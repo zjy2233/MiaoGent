@@ -102,6 +102,10 @@ async def run_sub_agent(
     每个调用生成一个全新的 sub-agent 实例和独立的 thread_id，
     实现**上下文隔离**。
 
+    如果当前调用链中存在 tracing 上下文（由 delegate_task 设置），
+    则自动采集 sub-agent 内部的 LLM/Tool 调用 span，
+    挂载到 delegate_task span 下。
+
     Args:
         llm: LLM 实例。
         task: 子任务描述。
@@ -111,10 +115,31 @@ async def run_sub_agent(
     Returns:
         {"result": str, "agent_id": str}
     """
+    # ── 检查 tracing 上下文 ──
+    from src.tracing.context import get_trace_context
+    tracer, parent_span_id = get_trace_context()
+
     agent = create_sub_agent(llm, tools=tools, prompt=prompt)
+
+    config: dict[str, Any] = {
+        "configurable": {"thread_id": uuid.uuid4().hex},
+        "recursion_limit": 50,
+    }
+
+    if tracer is not None and parent_span_id:
+        # 使用共享 tracer 采集 sub-agent 内部 spans
+        from src.tracing.handler import TraceCallbackHandler
+        from src.tracing.store import TraceStore
+        # 共享模式下：不写 store（主 agent 的 bridge 会批量写入），只需采集 span 树
+        handler = TraceCallbackHandler(
+            store=TraceStore(),  # 临时 store（span 只存在于 tracer 中）
+            tracer=tracer,
+        )
+        config["callbacks"] = [handler]
+
     result = await agent.ainvoke(
         {"messages": [HumanMessage(content=task)]},
-        {"configurable": {"thread_id": uuid.uuid4().hex}, "recursion_limit": 50},
+        config,
     )
     messages = result.get("messages", [])
     response = messages[-1].content if messages else "(无返回)"

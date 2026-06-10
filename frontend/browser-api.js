@@ -114,7 +114,12 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ thread_ids: ids }),
     }),
-    getMessages: (tid) => fetchJSON(`${BASE_URL}/api/sessions/${tid}/messages`),
+    getMessages: (tid, opts) => {
+      const params = new URLSearchParams();
+      if (opts && opts.include_tool_calls === false) params.set('include_tool_calls', 'false');
+      const qs = params.toString();
+      return fetchJSON(`${BASE_URL}/api/sessions/${tid}/messages${qs ? '?' + qs : ''}`);
+    },
     compressSession: (tid) => fetchJSON(`${BASE_URL}/api/sessions/${tid}/compress`, { method: 'POST' }),
     sendChat: (tid, msg) => fetchJSON(`${BASE_URL}/api/chat`, {
       method: 'POST',

@@ -332,6 +332,65 @@ body.panel-dragging #panel-mode {
   color: white;
 }
 
+/* ── Session Toolbar ─────────────────────── */
+.session-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px 10px;
+  gap: 10px;
+}
+
+.session-toolbar.hidden {
+  display: none !important;
+}
+
+.select-all-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.5);
+  cursor: pointer;
+  user-select: none;
+}
+
+.select-all-label:hover {
+  color: rgba(255,255,255,0.7);
+}
+
+.select-all-label:hover .session-checkbox:not(:checked) {
+  border-color: rgba(162, 155, 254, 0.4);
+  background: rgba(162, 155, 254, 0.06);
+}
+
+.select-all-text {
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.btn-danger-sm {
+  padding: 5px 14px;
+  border: none;
+  border-radius: 8px;
+  background: rgba(255,80,80,0.15);
+  color: rgba(255,80,80,0.6);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 120ms, color 120ms, box-shadow 120ms;
+}
+
+.btn-danger-sm:hover:not(:disabled) {
+  background: rgba(255,80,80,0.3);
+  color: #ff6b6b;
+}
+
+.btn-danger-sm:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 /* ── Session & Tools Lists ────────────────── */
 .session-list {
   display: flex;
@@ -549,7 +608,13 @@ body.panel-dragging #panel-mode {
   color: rgba(255,255,255,0.3);
   width: 12px;
   flex-shrink: 0;
-  transition: transform 120ms;
+  transition: transform 120ms, color 120ms;
+}
+.tool-group.collapsed .tool-group-arrow {
+  transform: rotate(-90deg);
+}
+.tool-group-header:hover .tool-group-arrow {
+  color: rgba(255,255,255,0.6);
 }
 .tool-group-icon {
   width: 20px;
@@ -639,6 +704,10 @@ body.panel-dragging #panel-mode {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  transition: color 120ms;
+}
+.tool-card:hover .tool-card-desc {
+  color: rgba(255,255,255,0.6);
 }
 
 /* ── Floating Tooltip ── */
@@ -1745,8 +1814,17 @@ body.panel-dragging #panel-mode {
   background: #1a1a2e;
   border: 1px solid #2e2e48;
   border-radius: 8px;
-  padding: 12px 14px;
+  padding: 0;
   margin-bottom: 16px;
+  overflow: hidden;
+}
+
+.trace-waterfall-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid #2e2e48;
 }
 
 .trace-waterfall-title {
@@ -1754,65 +1832,203 @@ body.panel-dragging #panel-mode {
   font-weight: 600;
   color: #8888aa;
   text-transform: uppercase;
-  margin-bottom: 10px;
+}
+
+.trace-waterfall-hint {
+  font-size: 9px;
+  color: #555;
+}
+
+/* Time axis ruler */
+.trace-waterfall-ruler {
+  display: flex;
+  align-items: flex-end;
+  position: relative;
+  margin-left: var(--wf-label-w, 180px);
+  height: 22px;
+  border-bottom: 1px solid #2e2e48;
+  padding: 0 4px;
+}
+
+.trace-waterfall-tick {
+  position: absolute;
+  bottom: 0;
+  font-size: 9px;
+  color: #666;
+  transform: translateX(-50%);
+  padding-bottom: 4px;
+  white-space: nowrap;
+}
+
+.trace-waterfall-tick::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 50%;
+  width: 1px;
+  height: 6px;
+  background: #2e2e48;
+}
+
+/* Rows scroll area */
+.trace-waterfall-rows {
+  max-height: 480px;
+  overflow-y: auto;
 }
 
 .trace-waterfall-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 6px;
-  cursor: pointer;
-  transition: opacity 120ms;
+  height: 28px;
+  position: relative;
+  transition: background 120ms;
+  border-bottom: 1px solid #15152a;
 }
 
 .trace-waterfall-row:hover {
-  opacity: 0.85;
+  background: #1e1e34;
 }
 
+.trace-waterfall-row:nth-child(even) {
+  background: #16162a;
+}
+
+.trace-waterfall-row:nth-child(even):hover {
+  background: #1e1e34;
+}
+
+/* Label area (indented by depth) */
 .trace-waterfall-label {
-  width: 80px;
-  font-size: 10px;
-  color: #888;
-  text-align: right;
+  width: var(--wf-label-w, 180px);
   flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: #aaa;
+  padding: 0 8px;
+  overflow: hidden;
+  white-space: nowrap;
+  position: relative;
+  height: 100%;
+  border-right: 1px solid #2e2e48;
+}
+
+.trace-waterfall-label .wf-icon {
+  font-size: 10px;
+  width: 12px;
+  flex-shrink: 0;
+  text-align: center;
+}
+
+.trace-waterfall-label .wf-name {
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
+.wf-depth-line {
+  position: absolute;
+  left: 10px;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #2e2e48;
+}
+
+/* Track area (the bar chart) */
 .trace-waterfall-track {
   flex: 1;
-  height: 18px;
-  background: #12122a;
-  border-radius: 3px;
+  height: 100%;
+  background: transparent;
   position: relative;
-  overflow: hidden;
+  overflow: visible;
+}
+
+/* Grid lines (vertical) */
+.trace-waterfall-grid {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #1e1e38;
+  pointer-events: none;
 }
 
 .trace-waterfall-bar {
   position: absolute;
-  top: 0;
-  height: 100%;
-  border-radius: 3px;
-  opacity: 0.85;
-  transition: opacity 120ms;
+  top: 6px;
+  height: calc(100% - 12px);
+  border-radius: 2px;
+  opacity: 0.88;
+  min-width: 4px;
+  cursor: pointer;
+  transition: opacity 100ms, filter 100ms;
+  z-index: 1;
 }
 
 .trace-waterfall-bar:hover {
   opacity: 1;
+  filter: brightness(1.3);
 }
 
-.trace-waterfall-bar.llm     { background: #3b82f6; }
-.trace-waterfall-bar.tool    { background: #f59e0b; }
-.trace-waterfall-bar.session { background: #8b5cf6; }
-.trace-waterfall-bar.step    { background: #10b981; }
+.trace-waterfall-bar.llm      { background: #3b82f6; }
+.trace-waterfall-bar.tool     { background: #f59e0b; }
+.trace-waterfall-bar.session  { background: #8b5cf6; }
+.trace-waterfall-bar.step     { background: #10b981; }
+.trace-waterfall-bar.delegate { background: #ec4899; }
 
+/* Duration badge */
 .trace-waterfall-dur {
-  width: 50px;
-  font-size: 10px;
-  color: #666;
+  width: 55px;
   flex-shrink: 0;
+  font-size: 9px;
+  color: #777;
+  text-align: right;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+
+/* Tooltip on bar hover */
+.trace-waterfall-tooltip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #252540;
+  border: 1px solid #3e3e5e;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 10px;
+  color: #ccc;
+  white-space: nowrap;
+  z-index: 999;
+  pointer-events: none;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
+
+.trace-waterfall-bar:hover .trace-waterfall-tooltip {
+  display: block;
+}
+
+/* Legend inside waterfall */
+.trace-waterfall-legend {
+  display: flex;
+  gap: 14px;
+  padding: 8px 14px;
+  border-top: 1px solid #2e2e48;
+  font-size: 9px;
+  color: #777;
+  align-items: center;
+}
+
+.trace-waterfall-legend-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 3px;
+  vertical-align: middle;
 }
 
 /* ============================================================
@@ -1857,6 +2073,11 @@ body.panel-dragging #panel-mode {
 .trace-span-row.step {
   background: #0a1f1a;
   border-left-color: #10b981;
+}
+
+.trace-span-row.delegate {
+  background: #1f0a1e;
+  border-left-color: #ec4899;
 }
 
 .trace-span-row.has-error {

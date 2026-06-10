@@ -230,7 +230,7 @@ class TraceStore:
             conn = sqlite3.connect(self._db_path)
             try:
                 today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                # session_turn count, avg duration, error count
+                # session_turn count, avg duration, error count for today
                 row = conn.execute(
                     "SELECT COUNT(*) as total_traces, "
                     "COALESCE(AVG(duration_ms), 0) as avg_duration_ms, "
@@ -238,12 +238,18 @@ class TraceStore:
                     "FROM spans WHERE span_type='session_turn' AND started_at >= ?",
                     (today,),
                 ).fetchone()
-                # token sums from ALL spans today (token data lives on llm_call spans)
+                # token sums from ALL spans today
                 row_t = conn.execute(
                     "SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0), "
                     "COALESCE(SUM(cache_hit_tokens), 0), COALESCE(SUM(cache_miss_tokens), 0) "
                     "FROM spans WHERE started_at >= ?",
                     (today,),
+                ).fetchone()
+                # all-time token + cache sums (no date filter)
+                row_all = conn.execute(
+                    "SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0), "
+                    "COALESCE(SUM(cache_hit_tokens), 0), COALESCE(SUM(cache_miss_tokens), 0) "
+                    "FROM spans"
                 ).fetchone()
                 yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
                 row_y = conn.execute(
@@ -255,6 +261,10 @@ class TraceStore:
                     "total_traces": row[0],
                     "total_input_tokens": row_t[0],
                     "total_output_tokens": row_t[1],
+                    "all_time_input_tokens": row_all[0],
+                    "all_time_output_tokens": row_all[1],
+                    "all_time_cache_hit_tokens": row_all[2],
+                    "all_time_cache_miss_tokens": row_all[3],
                     "total_cache_hit_tokens": row_t[2],
                     "total_cache_miss_tokens": row_t[3],
                     "total_tokens": row_t[0] + row_t[1],

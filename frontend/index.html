@@ -99,6 +99,13 @@
       <div class="panel-body">
         <!-- 会话列表 -->
         <div id="session-list-view">
+          <div class="session-toolbar hidden" id="session-toolbar">
+            <label class="select-all-label">
+              <input type="checkbox" class="session-checkbox" id="select-all-sessions">
+              <span class="select-all-text">全选</span>
+            </label>
+            <button id="batch-delete-btn" class="btn-danger-sm" disabled>删除选中</button>
+          </div>
           <div class="session-list" id="session-list">
             <div class="empty-state">暂无会话</div>
           </div>

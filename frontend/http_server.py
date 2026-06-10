@@ -169,7 +169,8 @@ async def delete_sessions_batch(request: Request) -> Response:
 
 async def get_session_messages(request: Request) -> Response:
     thread_id = request.match_info["thread_id"]
-    messages = await get_api().get_messages(thread_id)
+    include_tool_calls = request.query.get("include_tool_calls", "true").lower() != "false"
+    messages = await get_api().get_messages(thread_id, include_tool_calls=include_tool_calls)
     return json_response(messages)
 
 

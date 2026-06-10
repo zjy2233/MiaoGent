@@ -119,8 +119,18 @@ const api = {
     fetch(`${BASE_URL}/api/sessions`, { method: 'POST' }).then((r) => r.json()),
   deleteSession: (id) =>
     fetch(`${BASE_URL}/api/sessions/${id}`, { method: 'DELETE' }).then((r) => r.json()),
-  getMessages: (threadId) =>
-    fetch(`${BASE_URL}/api/sessions/${threadId}/messages`).then((r) => r.json()),
+  deleteSessionsBatch: (ids) =>
+    fetch(`${BASE_URL}/api/sessions/batch-delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ thread_ids: ids }),
+    }).then((r) => r.json()),
+  getMessages: (threadId, opts) => {
+    const params = new URLSearchParams();
+    if (opts && opts.include_tool_calls === false) params.set('include_tool_calls', 'false');
+    const qs = params.toString();
+    return fetch(`${BASE_URL}/api/sessions/${threadId}/messages${qs ? '?' + qs : ''}`).then((r) => r.json());
+  },
   // 触发会话记忆压缩（退出时调用）
   compressSession: (threadId) =>
     fetch(`${BASE_URL}/api/sessions/${threadId}/compress`, {
