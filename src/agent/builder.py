@@ -254,11 +254,16 @@ class MemoryMiddleware(AgentMiddleware):
 
 
 class TimeMiddleware(AgentMiddleware):
-    """在每次 LLM 调用前注入当前日期时间。"""
+    """在每次 LLM 调用前注入当前日期时间（会话级冻结，避免破坏前缀缓存）。"""
+
+    def __init__(self):
+        super().__init__()
+        self._session_time: str | None = None
 
     async def awrap_model_call(self, request, handler):
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        time_msg = SystemMessage(content=f"[当前时间]\n{now}")
+        if self._session_time is None:
+            self._session_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        time_msg = SystemMessage(content=f"[当前时间]\n{self._session_time}")
         request = request.override(
             messages=[time_msg, *request.messages]
         )
