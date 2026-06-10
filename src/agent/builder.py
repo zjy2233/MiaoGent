@@ -344,29 +344,65 @@ class MergedContextMiddleware(AgentMiddleware):
 
     async def awrap_model_call(self, request, handler):
         context_parts: list[str] = []
+        stable_parts: list[str] = []
+        dynamic_parts: list[str] = []
 
         # Layer 1: 对话历史摘要
         summary = request.state.get("summary", "") or ""
         if summary:
-            context_parts.append(f"[对话历史摘要]\n{summary}")
+            part = f"[对话历史摘要]\n{summary}"
+            context_parts.append(part)
+            stable_parts.append(part)
 
         # Layer 2: 用户画像 + 结构化记忆
         memory_text = self._build_memory_text()
         if memory_text:
-            context_parts.append(f"[关于用户]\n{memory_text}")
+            part = f"[关于用户]\n{memory_text}"
+            context_parts.append(part)
+            stable_parts.append(part)
 
         # Layer 3: Skill 上下文由 SkillContextMiddleware 独立注入（需访问 messages）
         # Layer 4: 当前时间（会话级冻结）
         if self._session_time is None:
             self._session_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        context_parts.append(f"[当前时间]\n{self._session_time}")
+        time_part = f"[当前时间]\n{self._session_time}"
+        context_parts.append(time_part)
+        dynamic_parts.append(time_part)
 
         if context_parts:
-            combined = "\n\n".join(context_parts)
+            # Anthropic: mark stable content with cache_control for prompt caching
+            if self._is_anthropic(request):
+                content_blocks: list[dict] = []
+                if stable_parts:
+                    stable_text = "\n\n".join(stable_parts)
+                    content_blocks.append({
+                        "type": "text",
+                        "text": stable_text,
+                        "cache_control": {"type": "ephemeral"},
+                    })
+                if dynamic_parts:
+                    content_blocks.append({
+                        "type": "text",
+                        "text": "\n\n".join(dynamic_parts),
+                    })
+                context_msg = SystemMessage(content=content_blocks)
+            else:
+                combined = "\n\n".join(context_parts)
+                context_msg = SystemMessage(content=combined)
             request = request.override(
-                messages=[SystemMessage(content=combined), *request.messages]
+                messages=[context_msg, *request.messages]
             )
         return await handler(request)
+
+    @staticmethod
+    def _is_anthropic(request) -> bool:
+        """检测当前模型是否为 Anthropic。"""
+        try:
+            from langchain_anthropic import ChatAnthropic
+            model = getattr(request, "model", None)
+            return isinstance(model, ChatAnthropic)
+        except ImportError:
+            return False
 
 
 def build_agent(
