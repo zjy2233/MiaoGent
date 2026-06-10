@@ -112,6 +112,30 @@ class MemoryStore:
                     UNIQUE(category, key)
                 )"""
             )
+            # Migration: add consolidation columns (safe to re-run)
+            for col_sql in [
+                "ALTER TABLE working_memories ADD COLUMN status TEXT DEFAULT 'raw'",
+                "ALTER TABLE working_memories ADD COLUMN consolidated_at TEXT",
+                "ALTER TABLE working_memories ADD COLUMN consolidation_round INTEGER",
+            ]:
+                try:
+                    conn.execute(col_sql)
+                except sqlite3.OperationalError:
+                    pass  # column already exists
+
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS consolidated_knowledge (
+                    id TEXT PRIMARY KEY,
+                    topic TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    source_ids TEXT NOT NULL,
+                    confidence REAL NOT NULL DEFAULT 0.0,
+                    status TEXT NOT NULL DEFAULT 'active'
+                        CHECK(status IN ('active','superseded','archived')),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )"""
+            )
             conn.commit()
         finally:
             conn.close()
@@ -280,21 +304,30 @@ class MemoryStore:
         return count
 
     def get_working_memories(
-        self, category: str | None = None, limit: int = 50
+        self, category: str | None = None, limit: int = 50, status: str | None = None
     ) -> list[dict[str, str]]:
-        """获取工作记忆，按更新时间倒序。"""
+        """获取工作记忆，按更新时间倒序。
+
+        Args:
+            category: 筛选分类。
+            limit: 返回条数上限。
+            status: 筛选状态 ('raw', 'consolidated', 或 None=不限)。
+        """
         conn = self._conn()
         try:
+            conditions: list[str] = []
+            params: list[str | int] = []
             if category:
-                rows = conn.execute(
-                    "SELECT * FROM working_memories WHERE category=? ORDER BY updated_at DESC LIMIT ?",
-                    (category, limit),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    "SELECT * FROM working_memories ORDER BY updated_at DESC LIMIT ?",
-                    (limit,),
-                ).fetchall()
+                conditions.append("category=?")
+                params.append(category)
+            if status:
+                conditions.append("status=?")
+                params.append(status)
+            where = "WHERE " + " AND ".join(conditions) if conditions else ""
+            rows = conn.execute(
+                f"SELECT * FROM working_memories {where} ORDER BY updated_at DESC LIMIT ?",
+                (*params, limit),
+            ).fetchall()
             return [dict(r) for r in rows]
         finally:
             conn.close()
@@ -308,14 +341,146 @@ class MemoryStore:
         finally:
             conn.close()
 
+    # ══════════════════════════════════════════════════════════════════
+    #  知识归并 (Knowledge Consolidation)
+    # ══════════════════════════════════════════════════════════════════
+
+    def get_raw_facts(self, limit: int = 50) -> list[dict[str, str]]:
+        """获取待归并的 raw facts（status='raw' 且 consolidated_at IS NULL）。"""
+        conn = self._conn()
+        try:
+            rows = conn.execute(
+                """SELECT * FROM working_memories
+                   WHERE status='raw' AND consolidated_at IS NULL
+                   ORDER BY created_at ASC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def count_raw_facts(self) -> int:
+        """统计待归并的 raw facts 数量。"""
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM working_memories WHERE status='raw' AND consolidated_at IS NULL"
+            ).fetchone()
+            return row["c"]
+        finally:
+            conn.close()
+
+    def get_consolidated_knowledge(
+        self, status: str = "active"
+    ) -> list[dict[str, str]]:
+        """获取归并后的知识条目。"""
+        conn = self._conn()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM consolidated_knowledge WHERE status=? ORDER BY updated_at DESC",
+                (status,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def save_consolidated_knowledge(self, entries: list[dict]) -> int:
+        """批量写入归并知识条目。
+
+        Args:
+            entries: [{"id", "topic", "content", "source_ids", "confidence", ...}]
+
+        Returns:
+            写入条数
+        """
+        conn = self._conn()
+        now = _now_iso()
+        try:
+            count = 0
+            for entry in entries:
+                eid = entry.get("id", _new_id())
+                conn.execute(
+                    """INSERT OR REPLACE INTO consolidated_knowledge
+                       (id, topic, content, source_ids, confidence, status, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        eid,
+                        entry["topic"],
+                        entry["content"],
+                        json.dumps(entry.get("source_ids", []), ensure_ascii=False),
+                        entry.get("confidence", 0.0),
+                        entry.get("status", "active"),
+                        entry.get("created_at", now),
+                        now,
+                    ),
+                )
+                count += 1
+            conn.commit()
+            return count
+        finally:
+            conn.close()
+
+    def mark_facts_state(
+        self, fact_ids: list[str], state: str = "consolidated", round_id: int | None = None
+    ) -> int:
+        """批量标记 facts 状态。
+
+        Args:
+            fact_ids: 要更新的 fact ID 列表。
+            state: "consolidated" 或 "archived"。
+            round_id: 归并轮次号。
+
+        Returns:
+            更新的行数。
+        """
+        if not fact_ids:
+            return 0
+        conn = self._conn()
+        now = _now_iso()
+        try:
+            placeholders = ",".join("?" for _ in fact_ids)
+            if state == "archived":
+                cur = conn.execute(
+                    f"UPDATE working_memories SET status='archived', updated_at=? WHERE id IN ({placeholders})",
+                    (now, *fact_ids),
+                )
+            else:
+                round_val = round_id or int(datetime.now(timezone.utc).timestamp())
+                cur = conn.execute(
+                    f"""UPDATE working_memories
+                        SET status=?, consolidated_at=?, consolidation_round=?, updated_at=?
+                        WHERE id IN ({placeholders})""",
+                    (state, now, round_val, now, *fact_ids),
+                )
+            conn.commit()
+            return cur.rowcount
+        finally:
+            conn.close()
+
+    def count_today_consolidations(self) -> int:
+        """统计今天已执行的归并轮次（用于频率控制）。"""
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                """SELECT COUNT(DISTINCT consolidation_round) AS c
+                   FROM working_memories
+                   WHERE consolidated_at LIKE ?""",
+                (f"{today}%",),
+            ).fetchone()
+            return row["c"]
+        finally:
+            conn.close()
+
     def get_all_formatted(self) -> str:
-        """获取格式化的完整记忆（核心 + 工作），用于注入 LLM 上下文。"""
+        """获取格式化的完整记忆（核心 + 工作 + 归纳知识），用于注入 LLM 上下文。"""
         parts = []
         core_text = self.get_formatted_core_memory()
         if core_text:
             parts.append(core_text)
 
-        wm = self.get_working_memories()
+        # 工作记忆：只展示未归并的 raw 条目
+        wm = self.get_working_memories(status="raw")
         if wm:
             wm_lines = ["\n[从对话中学到的信息]"]
             seen_keys: set[str] = set()
@@ -331,6 +496,16 @@ class MemoryStore:
                 wm_lines.append(f"  - [{cat_label}] {key}: {val}{conf_tag}")
             parts.append("\n".join(wm_lines))
 
+        # 归纳知识
+        ck = self.get_consolidated_knowledge(status="active")
+        if ck:
+            ck_lines = ["\n[归纳知识]"]
+            for entry in ck:
+                topic = entry.get("topic", "")
+                content = entry.get("content", "")
+                ck_lines.append(f"  - {topic}: {content}")
+            parts.append("\n".join(ck_lines))
+
         return "\n".join(parts).strip()
 
     # ── 统计 ──────────────────────────────────────────────────────────
@@ -341,6 +516,10 @@ class MemoryStore:
         conn = self._conn()
         try:
             wm_count = conn.execute("SELECT COUNT(*) AS c FROM working_memories").fetchone()["c"]
+            raw_count = conn.execute(
+                "SELECT COUNT(*) AS c FROM working_memories WHERE status='raw' AND consolidated_at IS NULL"
+            ).fetchone()["c"]
+            ck_count = conn.execute("SELECT COUNT(*) AS c FROM consolidated_knowledge WHERE status='active'").fetchone()["c"]
             by_category = {
                 r["category"]: r["c"]
                 for r in conn.execute(
@@ -352,5 +531,7 @@ class MemoryStore:
         return {
             "core_memory_entries": core_count,
             "working_memories_total": wm_count,
+            "working_memories_raw": raw_count,
+            "consolidated_knowledge": ck_count,
             "working_memories_by_category": by_category,
         }

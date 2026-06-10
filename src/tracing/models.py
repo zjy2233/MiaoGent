@@ -36,6 +36,9 @@ class SpanData:
     ended_at: str = ""
     duration_ms: int = 0
     user_message: str = ""
+    llm_input: str = ""
+    llm_output: str = ""
+    tool_output: str = ""
 
     def end(self, status: str = "ok", error_message: str = "") -> None:
         now = datetime.now(timezone.utc)
@@ -66,4 +69,7 @@ class SpanData:
             "ended_at": self.ended_at,
             "duration_ms": self.duration_ms,
             "user_message": self.user_message,
+            "llm_input": self.llm_input,
+            "llm_output": self.llm_output,
+            "tool_output": self.tool_output,
         }

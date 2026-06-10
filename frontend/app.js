@@ -46,17 +46,11 @@ function initBallMode() {
   wrapper.addEventListener('mouseenter', () => {
     clearTimeout(expandTimer);
     menu.classList.remove('hidden');
-    if (window.api && window.api.resizeBall) {
-      window.api.resizeBall(280, 220);
-    }
   });
 
   wrapper.addEventListener('mouseleave', () => {
     expandTimer = setTimeout(() => {
       menu.classList.add('hidden');
-      if (window.api && window.api.resizeBall) {
-        window.api.resizeBall(148, 155);
-      }
     }, 300);
   });
 
@@ -65,9 +59,6 @@ function initBallMode() {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       menu.classList.add('hidden');
-      if (window.api && window.api.resizeBall) {
-        window.api.resizeBall(148, 155);
-      }
       if (window.api && window.api.openPanel) {
         window.api.openPanel(btn.dataset.panel);
       }
@@ -176,6 +167,37 @@ function initPanelMode(panelName) {
     const el = document.getElementById(id);
     el.classList.toggle('hidden', id !== `${panelName}-panel`);
   });
+
+  // ── 标题栏拖拽移动窗口 ──────────────────
+  (() => {
+    let dragging = false;
+    let lastX = 0, lastY = 0;
+    const THRESHOLD = 3;
+
+    panelContainer.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      if (!e.target.closest('.panel-header')) return;
+      dragging = true;
+      lastX = e.screenX;
+      lastY = e.screenY;
+    });
+
+    document.addEventListener('mousemove', (e) => {
+      if (!dragging) return;
+      if (!(e.buttons & 1)) { dragging = false; return; }
+      const dx = e.screenX - lastX;
+      const dy = e.screenY - lastY;
+      if (Math.abs(dx) > THRESHOLD || Math.abs(dy) > THRESHOLD) {
+        if (window.api && window.api.panelDragMove) {
+          window.api.panelDragMove(dx, dy);
+        }
+        lastX = e.screenX;
+        lastY = e.screenY;
+      }
+    });
+
+    document.addEventListener('mouseup', () => { dragging = false; });
+  })();
 
   // ── 双击标题栏切换全屏 ──────────────────
   panelContainer.addEventListener('dblclick', (e) => {
@@ -935,6 +957,26 @@ function confirmDelete(message) {
 
 // ── 工具面板 ──────────────────────────────────────────────────────────
 
+// ── 工具分类配置 ──
+const TOOL_CATEGORIES = [
+  { key: 'system',  label: '系统操作', icon: '💻', color: '#f87171', match: ['shell', 'file_operations', 'write_file'] },
+  { key: 'code',    label: '代码执行', icon: '🐍', color: '#38bdf8', match: ['run_python', 'calculator'] },
+  { key: 'web',     label: '网络信息', icon: '🌐', color: '#f59e0b', match: ['web_search', 'hot_search', 'web_fetch', 'weather', 'current_time'] },
+  { key: 'skill',   label: '技能管理', icon: '📦', color: '#f472b6', match: ['install_skill', 'uninstall_skill', 'list_registry', 'list_skills', 'delegate_task'] },
+  { key: 'other',   label: '其他',     icon: '🔧', color: '#9ca3af', match: [] },
+];
+
+function getToolCategory(toolName) {
+  const name = toolName.toLowerCase();
+  return TOOL_CATEGORIES.find(c => c.match.some(m => name.includes(m))) || TOOL_CATEGORIES.find(c => c.key === 'other');
+}
+
+function getToolFileName(tool) {
+  const f = tool.file || '';
+  const parts = f.replace(/\\/g, '/').split('/');
+  return parts.slice(-2).join('/');
+}
+
 async function setupToolsPanel() {
   try {
     const tools = await window.api.getTools();
@@ -943,15 +985,47 @@ async function setupToolsPanel() {
       grid.innerHTML = '<div class="empty-state">暂无工具</div>';
       return;
     }
-    grid.innerHTML = tools
-      .map(
-        (t) =>
-          `<div class="tool-card">
-            <h4>${escapeHtml(t.name)}</h4>
-            <p>${escapeHtml(t.description || '无描述')}</p>
-          </div>`
-      )
-      .join('');
+
+    // 按分类分组
+    const grouped = {};
+    for (const t of tools) {
+      const cat = getToolCategory(t.name);
+      const key = cat.key;
+      if (!grouped[key]) grouped[key] = { cat, tools: [] };
+      grouped[key].tools.push(t);
+    }
+
+    // 保持分类定义顺序
+    const order = TOOL_CATEGORIES.map(c => c.key);
+    const sortedKeys = [...new Set([...order.filter(k => grouped[k]), ...Object.keys(grouped)])];
+
+    let html = '';
+    for (const key of sortedKeys) {
+      const group = grouped[key];
+      if (!group) continue;
+      const { cat, tools: groupTools } = group;
+      html += `<div class="tool-category">
+        <div class="tool-category-header">
+          <span class="tool-category-icon">${cat.icon}</span>
+          <span class="tool-category-label">${cat.label}</span>
+          <span class="tool-category-count">${groupTools.length}</span>
+        </div>
+        <div class="tool-category-grid">`;
+      for (const t of groupTools) {
+        const fileName = getToolFileName(t);
+        html += `<div class="tool-card">
+          <div class="tool-card-header">
+            <span class="tool-card-badge" style="background:${cat.color}22;color:${cat.color};">${cat.icon} ${cat.label}</span>
+            <span class="tool-card-file" title="${escapeHtml(t.file || '')}">${escapeHtml(fileName)}</span>
+          </div>
+          <div class="tool-card-name">${escapeHtml(t.name)}</div>
+          <div class="tool-card-desc">${escapeHtml(t.description || '无描述')}</div>
+        </div>`;
+      }
+      html += `</div></div>`;
+    }
+
+    grid.innerHTML = html;
   } catch (e) {
     console.error('Failed to load tools', e);
   }
@@ -1086,11 +1160,13 @@ async function setupMonitoringPanel() {
       <button class="monitoring-tab" data-tab="traces">Trace</button>
       <button class="monitoring-tab" data-tab="tokens">Token</button>
       <button class="monitoring-tab" data-tab="latency">延迟</button>
+      <button class="monitoring-tab" data-tab="cache">缓存</button>
     </div>
     <div id="monitoring-overview" class="monitoring-view active"></div>
     <div id="monitoring-traces" class="monitoring-view"></div>
     <div id="monitoring-tokens" class="monitoring-view"></div>
     <div id="monitoring-latency" class="monitoring-view"></div>
+    <div id="monitoring-cache" class="monitoring-view"></div>
   `;
 
   // ── Tab switching ──
@@ -1105,6 +1181,7 @@ async function setupMonitoringPanel() {
       if (tab.dataset.tab === 'traces') loadTraces();
       else if (tab.dataset.tab === 'tokens') loadTokenStats();
       else if (tab.dataset.tab === 'latency') loadLatencyStats();
+      else if (tab.dataset.tab === 'cache') loadCacheStats();
     });
   });
 
@@ -1211,55 +1288,136 @@ async function loadOverview() {
   }
 }
 
+let traceState = { page: 0, pageSize: 50, sortField: 'time', sortDir: 'desc' };
+
 async function loadTraces() {
   const container = document.getElementById('monitoring-traces');
   if (!container) return;
 
-  // Search bar
   container.innerHTML = `
     <div class="monitoring-card">
-      <div style="display:flex;gap:8px;margin-bottom:12px;">
-        <input class="monitoring-search-input" id="trace-search-input" placeholder="搜索会话内容或 Trace ID..." />
+      <div style="display:flex;gap:8px;margin-bottom:8px;flex-wrap:wrap;">
+        <input class="monitoring-search-input" id="trace-search-input" placeholder="搜索会话内容或 Trace ID..." style="flex:2;min-width:140px;" />
         <select class="monitoring-select" id="trace-status-filter">
-          <option value="">全部</option>
+          <option value="">全部状态</option>
           <option value="ok">成功</option>
           <option value="error">失败</option>
         </select>
+        <select class="monitoring-select" id="trace-sort-field">
+          <option value="time" ${traceState.sortField === 'time' ? 'selected' : ''}>时间</option>
+          <option value="tokens" ${traceState.sortField === 'tokens' ? 'selected' : ''}>Token</option>
+          <option value="duration" ${traceState.sortField === 'duration' ? 'selected' : ''}>延迟</option>
+        </select>
+        <button class="monitoring-page-btn" id="trace-sort-dir" title="${traceState.sortDir === 'desc' ? '降序' : '升序'}">
+          ${traceState.sortDir === 'desc' ? '↓ 降序' : '↑ 升序'}
+        </button>
       </div>
       <div id="trace-list"></div>
+      <div id="trace-pagination" style="display:flex;justify-content:space-between;align-items:center;margin-top:12px;"></div>
     </div>
   `;
 
   const searchInput = document.getElementById('trace-search-input');
   const statusFilter = document.getElementById('trace-status-filter');
+  const sortField = document.getElementById('trace-sort-field');
+  const sortDirBtn = document.getElementById('trace-sort-dir');
 
   async function doSearch() {
     const list = document.getElementById('trace-list');
+    const pagination = document.getElementById('trace-pagination');
     if (!list) return;
     list.innerHTML = '<div style="text-align:center;padding:20px;color:#888;">加载中...</div>';
     try {
-      const traces = await window.api.getTraces(searchInput.value, statusFilter.value, 50, 0);
-      if (traces.length === 0) {
+      const [traces, totalCount] = await Promise.all([
+        window.api.getTraces(searchInput.value, statusFilter.value, traceState.pageSize, traceState.page * traceState.pageSize),
+        window.api.getTraceCount(searchInput.value, statusFilter.value)
+      ]);
+
+      // Client-side sort
+      let sorted = [...traces];
+      if (traceState.sortField === 'tokens') {
+        sorted.sort((a, b) => ((b.input_tokens || 0) + (b.output_tokens || 0)) - ((a.input_tokens || 0) + (a.output_tokens || 0)));
+      } else if (traceState.sortField === 'duration') {
+        sorted.sort((a, b) => (b.duration_ms || 0) - (a.duration_ms || 0));
+      }
+      // 'time' is already sorted by backend DESC
+      if (traceState.sortDir === 'asc') sorted.reverse();
+
+      if (sorted.length === 0) {
         list.innerHTML = '<div style="text-align:center;padding:20px;color:#888;">暂无 Trace 记录</div>';
+        if (pagination) pagination.innerHTML = '';
         return;
       }
-      list.innerHTML = traces.map(t => `
+
+      const totalPages = Math.ceil(totalCount / traceState.pageSize);
+      const startNum = traceState.page * traceState.pageSize + 1;
+      const endNum = Math.min(startNum + sorted.length - 1, totalCount);
+
+      list.innerHTML = sorted.map(t => {
+        const totalTk = (t.input_tokens || 0) + (t.output_tokens || 0);
+        return `
         <div class="monitoring-trace-row" onclick="showTraceDetail('${t.trace_id}')">
           <span style="width:8px;height:8px;border-radius:50%;background:${t.status === 'error' ? '#f87171' : '#4ade80'};flex-shrink:0;"></span>
           <span style="font-size:12px;color:#ddd;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${t.user_message || t.trace_id.slice(0, 8)}</span>
-          <span style="font-size:10px;color:#888;">${t.started_at ? t.started_at.slice(11, 19) : ''}</span>
-          <span style="font-size:11px;color:#aaa;">${((t.input_tokens || 0) + (t.output_tokens || 0)) >= 1000 ? (((t.input_tokens || 0) + (t.output_tokens || 0)) / 1000).toFixed(1) + 'K' : (t.input_tokens || 0) + (t.output_tokens || 0)}</span>
-          <span style="font-size:11px;color:#888;">${(t.duration_ms / 1000 || 0).toFixed(1)}s</span>
+          <span style="font-size:10px;color:#888;white-space:nowrap;">${t.started_at ? t.started_at.slice(5, 19).replace('T', ' ') : ''}</span>
+          <span style="font-size:11px;color:#a29bfe;white-space:nowrap;">${totalTk >= 1000 ? (totalTk / 1000).toFixed(1) + 'K' : totalTk} t</span>
+          <span style="font-size:11px;color:#888;white-space:nowrap;">${(t.duration_ms / 1000 || 0).toFixed(1)}s</span>
           <span class="monitoring-badge ${t.status === 'error' ? 'error' : 'success'}">${t.status === 'error' ? '失败' : '完成'}</span>
-        </div>
-      `).join('');
+        </div>`;
+      }).join('');
+
+      // Render pagination
+      if (pagination) {
+        pagination.innerHTML = `
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:11px;color:#888;">每页</span>
+            <select class="monitoring-select" id="trace-page-size" style="padding:2px 8px;font-size:11px;">
+              <option value="25" ${traceState.pageSize === 25 ? 'selected' : ''}>25</option>
+              <option value="50" ${traceState.pageSize === 50 ? 'selected' : ''}>50</option>
+              <option value="100" ${traceState.pageSize === 100 ? 'selected' : ''}>100</option>
+            </select>
+            <span style="font-size:11px;color:#888;">条</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:11px;color:#888;">${startNum}-${endNum} / ${totalCount} 条</span>
+            <button class="monitoring-page-btn" id="trace-prev-page" ${traceState.page <= 0 ? 'disabled' : ''}>上一页</button>
+            <span style="font-size:11px;color:#ccc;">第 ${traceState.page + 1}/${totalPages} 页</span>
+            <button class="monitoring-page-btn" id="trace-next-page" ${traceState.page >= totalPages - 1 ? 'disabled' : ''}>下一页</button>
+          </div>
+        `;
+
+        document.getElementById('trace-page-size').addEventListener('change', (e) => {
+          traceState.pageSize = parseInt(e.target.value);
+          traceState.page = 0;
+          doSearch();
+        });
+        document.getElementById('trace-prev-page').addEventListener('click', () => {
+          if (traceState.page > 0) { traceState.page--; doSearch(); }
+        });
+        document.getElementById('trace-next-page').addEventListener('click', () => {
+          if (traceState.page < totalPages - 1) { traceState.page++; doSearch(); }
+        });
+      }
     } catch (e) {
       list.innerHTML = '<div style="text-align:center;padding:20px;color:#f87171;">加载失败</div>';
     }
   }
 
-  searchInput.addEventListener('input', debounce(doSearch, 300));
-  statusFilter.addEventListener('change', doSearch);
+  searchInput.addEventListener('input', debounce(() => { traceState.page = 0; doSearch(); }, 300));
+  statusFilter.addEventListener('change', () => { traceState.page = 0; doSearch(); });
+  sortField.addEventListener('change', (e) => {
+    traceState.sortField = e.target.value;
+    traceState.sortDir = 'desc';
+    sortDirBtn.textContent = '↓ 降序';
+    sortDirBtn.title = '降序';
+    doSearch();
+  });
+  sortDirBtn.addEventListener('click', () => {
+    traceState.sortDir = traceState.sortDir === 'desc' ? 'asc' : 'desc';
+    sortDirBtn.textContent = traceState.sortDir === 'desc' ? '↓ 降序' : '↑ 升序';
+    sortDirBtn.title = traceState.sortDir === 'desc' ? '降序' : '升序';
+    doSearch();
+  });
   doSearch();
 }
 
@@ -1267,11 +1425,62 @@ async function loadTokenStats() {
   const container = document.getElementById('monitoring-tokens');
   if (!container) return;
   try {
-    const stats = await window.api.getTraceStats();
-    const traces = await window.api.getTraces(null, null, 100, 0);
+    const [stats, topTraces] = await Promise.all([
+      window.api.getTraceStats(),
+      window.api.getTokenTopTraces(14, 20)
+    ]);
     const totalInput = stats.total_input_tokens || 0;
     const totalOutput = stats.total_output_tokens || 0;
     const totalTokens = totalInput + totalOutput;
+
+    let rankingHtml = '';
+    if (topTraces && topTraces.length > 0) {
+      rankingHtml = `
+        <div class="monitoring-card">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <span style="font-size:13px;font-weight:600;color:#ddd;">Token 消耗排行（近14天 Top 20）</span>
+            <button class="monitoring-page-btn" id="token-ranking-reverse" title="反转排序">↑↓ 倒序</button>
+          </div>
+          <div id="token-ranking-list">
+            ${topTraces.map((t, i) => {
+              const tTokens = (t.total_tokens || 0);
+              const pct = totalTokens > 0 ? (tTokens / totalTokens * 100) : 0;
+              const rankColor = i === 0 ? '#fbbf24' : i === 1 ? '#d1d5db' : i === 2 ? '#d97706' : '#888';
+              const rankIcon = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `#${i + 1}`;
+              return `<div class="monitoring-trace-row" onclick="showTraceDetail('${t.trace_id}')" style="margin-bottom:6px;">
+                <span style="font-size:14px;width:24px;text-align:center;flex-shrink:0;">${rankIcon}</span>
+                <span style="font-size:12px;color:#ddd;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${t.user_message || t.trace_id.slice(0, 8)}</span>
+                <span style="font-size:10px;color:#888;">${t.started_at ? t.started_at.slice(5, 19).replace('T', ' ') : ''}</span>
+                <span style="font-size:11px;color:#a29bfe;font-weight:600;">${tTokens >= 1000 ? (tTokens / 1000).toFixed(1) + 'K' : tTokens}</span>
+                <span style="font-size:11px;color:#888;">${(t.duration_ms / 1000 || 0).toFixed(1)}s</span>
+                <div class="monitoring-progress-bar" style="width:60px;">
+                  <div class="monitoring-progress-fill" style="width:${pct}%;"></div>
+                </div>
+              </div>`;
+            }).join('')}
+          </div>
+        </div>
+      `;
+    }
+
+    // Build distribution from top traces
+    let distHtml = '';
+    if (topTraces && topTraces.length > 0) {
+      const maxTokens = Math.max(...topTraces.map(t => t.total_tokens || 0), 1);
+      distHtml = topTraces.slice(0, 12).map((t, i) => {
+        const tTokens = t.total_tokens || 0;
+        const pct = (tTokens / maxTokens * 100);
+        return `<div style="margin-bottom:10px;">
+          <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px;">
+            <span style="color:#aaa;">${t.user_message || 'Trace #' + (i + 1)}</span>
+            <span style="color:#888;">${tTokens >= 1000 ? (tTokens / 1000).toFixed(1) + 'K' : tTokens}</span>
+          </div>
+          <div class="monitoring-progress-bar">
+            <div class="monitoring-progress-fill" style="width:${pct}%;"></div>
+          </div>
+        </div>`;
+      }).join('');
+    }
 
     container.innerHTML = `
       <div class="monitoring-stat-grid">
@@ -1284,27 +1493,26 @@ async function loadTokenStats() {
           <div class="monitoring-stat-value" style="color:#74b9ff;">${totalOutput >= 1000 ? (totalOutput / 1000).toFixed(1) + 'K' : totalOutput}</div>
         </div>
       </div>
+      ${distHtml ? `
       <div class="monitoring-card">
         <div style="font-size:13px;font-weight:600;color:#ddd;margin-bottom:12px;">Token 分布（按会话）</div>
-        <div id="token-distribution">
-          ${traces.length === 0 ? '<div style="text-align:center;padding:20px;color:#888;">暂无数据</div>' :
-            traces.slice(0, 15).map((t, i) => {
-              const tTokens = (t.input_tokens || 0) + (t.output_tokens || 0);
-              const pct = totalTokens > 0 ? (tTokens / totalTokens * 100) : 0;
-              return `<div style="margin-bottom:10px;">
-                <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px;">
-                  <span style="color:#aaa;">${t.user_message || 'Trace ' + (i + 1)}</span>
-                  <span style="color:#888;">${tTokens}</span>
-                </div>
-                <div class="monitoring-progress-bar">
-                  <div class="monitoring-progress-fill" style="width:${pct}%;"></div>
-                </div>
-              </div>`;
-            }).join('')
-          }
-        </div>
+        <div id="token-distribution">${distHtml}</div>
       </div>
+      ` : ''}
+      ${rankingHtml}
     `;
+
+    // Reverse toggle handler
+    const reverseBtn = document.getElementById('token-ranking-reverse');
+    if (reverseBtn) {
+      reverseBtn.addEventListener('click', () => {
+        const list = document.getElementById('token-ranking-list');
+        if (!list) return;
+        const rows = Array.from(list.children);
+        rows.reverse();
+        rows.forEach(row => list.appendChild(row));
+      });
+    }
   } catch (e) {
     container.innerHTML = '<div style="text-align:center;padding:20px;color:#f87171;">加载失败</div>';
   }
@@ -1360,6 +1568,63 @@ async function loadLatencyStats() {
   }
 }
 
+async function loadCacheStats() {
+  const container = document.getElementById('monitoring-cache');
+  if (!container) return;
+  try {
+    const stats = await window.api.getTraceCacheStats();
+    const hitRate = stats.cache_hit_rate != null ? (stats.cache_hit_rate * 100).toFixed(1) : 0;
+    const hitTokens = stats.total_cache_hit_tokens || 0;
+    const missTokens = stats.total_cache_miss_tokens || 0;
+    const totalCached = hitTokens + missTokens;
+    const hitRateColor = hitRate > 50 ? '#4ade80' : hitRate > 20 ? '#fbbf24' : '#f87171';
+
+    container.innerHTML = `
+      <div class="monitoring-stat-grid">
+        <div class="monitoring-stat-box">
+          <div class="monitoring-stat-label">缓存命中率</div>
+          <div class="monitoring-stat-value" style="color:${hitRateColor};">${hitRate}%</div>
+        </div>
+        <div class="monitoring-stat-box">
+          <div class="monitoring-stat-label">命中 Token</div>
+          <div class="monitoring-stat-value" style="color:#4ade80;">${hitTokens >= 1000 ? (hitTokens / 1000).toFixed(1) + 'K' : hitTokens}</div>
+        </div>
+        <div class="monitoring-stat-box">
+          <div class="monitoring-stat-label">未命中 Token</div>
+          <div class="monitoring-stat-value" style="color:#f87171;">${missTokens >= 1000 ? (missTokens / 1000).toFixed(1) + 'K' : missTokens}</div>
+        </div>
+        <div class="monitoring-stat-box">
+          <div class="monitoring-stat-label">总缓存 Token</div>
+          <div class="monitoring-stat-value">${totalCached >= 1000 ? (totalCached / 1000).toFixed(1) + 'K' : totalCached}</div>
+        </div>
+      </div>
+      <div class="monitoring-card">
+        <div style="font-size:13px;font-weight:600;color:#ddd;margin-bottom:12px;">缓存命中分布</div>
+        <div style="display:flex;height:24px;border-radius:6px;overflow:hidden;background:#2a2a42;">
+          ${totalCached > 0 ? `
+            <div style="width:${hitRate}%;background:linear-gradient(90deg,#22c55e,#4ade80);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:#fff;min-width:${hitRate > 0 ? '40px' : '0'};">命中 ${hitRate}%</div>
+            <div style="flex:1;background:linear-gradient(90deg,#ef4444,#f87171);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:#fff;">未命中 ${(100 - hitRate).toFixed(1)}%</div>
+          ` : '<div style="width:100%;display:flex;align-items:center;justify-content:center;font-size:11px;color:#888;">暂无缓存数据</div>'}
+        </div>
+      </div>
+      <div class="monitoring-card">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 16px;font-size:12px;">
+          <div style="display:flex;justify-content:space-between;padding:8px 12px;background:#1a1a2e;border-radius:6px;">
+            <span style="color:#8888aa;">缓存 LLM 调用数</span>
+            <span style="color:#ccc;font-weight:600;">${stats.cached_llm_calls || 0}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding:8px 12px;background:#1a1a2e;border-radius:6px;">
+            <span style="color:#8888aa;">节省估算</span>
+            <span style="color:#4ade80;font-weight:600;">${hitTokens >= 1000 ? (hitTokens / 1000).toFixed(1) + 'K tokens' : hitTokens + ' tokens'}</span>
+          </div>
+        </div>
+      </div>
+    `;
+  } catch (e) {
+    container.innerHTML = '<div style="text-align:center;padding:20px;color:#f87171;">加载缓存统计失败</div>';
+  }
+}
+
 // ── Trace Detail ──
 
 async function showTraceDetail(traceId) {
@@ -1372,80 +1637,207 @@ async function showTraceDetail(traceId) {
     const root = detail.tree || {};
     const totalInput = spans.reduce((s, sp) => s + (sp.input_tokens || 0), 0);
     const totalOutput = spans.reduce((s, sp) => s + (sp.output_tokens || 0), 0);
+    const errorCount = spans.filter(s => s.status === 'error').length;
+    const toolCount = spans.filter(s => s.span_type === 'tool_call').length;
+    const llmCount = spans.filter(s => s.span_type === 'llm_call').length;
 
-    // Build tree HTML
-    function renderSpanTree(node, depth) {
+    // Helper: format JSON content nicely
+    function formatIOContent(raw, kind) {
+      if (!raw) return '<span style="color:#666;">(无数据)</span>';
+      try {
+        const obj = JSON.parse(raw);
+        return JSON.stringify(obj, null, 2);
+      } catch (_) {
+        return raw;
+      }
+    }
+
+    // Helper: copy button
+    function copyBtn(targetId) {
+      return `<button class="trace-copy-btn" onclick="(function(){
+        const el = document.getElementById('${targetId}');
+        if (!el) return;
+        navigator.clipboard.writeText(el.textContent);
+        const btn = event.target;
+        btn.textContent = '已复制';
+        btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = '复制'; btn.classList.remove('copied'); }, 1500);
+      })()">复制</button>`;
+    }
+
+    // I/O panel HTML
+    function renderIOPanel(span, ioType) {
+      const raw = ioType === 'input' ? (span.llm_input || span.tool_input || '')
+                  : (span.llm_output || span.tool_output || '');
+      const label = ioType === 'input' ? '输入' : '输出';
+      const contentId = `io-content-${span.span_id}-${ioType}`;
+      return `
+        <div class="trace-io-panel" id="io-panel-${span.span_id}-${ioType}" style="display:none;">
+          <div class="trace-io-panel-header">
+            <span>${span.span_type === 'llm_call' ? 'LLM' : 'Tool'} ${label}</span>
+            ${copyBtn(contentId)}
+          </div>
+          <div class="trace-io-content" id="${contentId}">${formatIOContent(raw)}</div>
+        </div>
+      `;
+    }
+
+    // Waterfall timeline
+    function renderWaterfall(spans) {
+      if (!spans || spans.length === 0) return '';
+      const flatSpans = [];
+      function collectFlat(node) {
+        if (!node) return;
+        flatSpans.push(node);
+        (node.children || []).forEach(collectFlat);
+      }
+      collectFlat(root);
+      if (flatSpans.length === 0) return '';
+      const timestamps = flatSpans.map(s => {
+        const ts = s.started_at ? new Date(s.started_at).getTime() : 0;
+        return { ts, dur: s.duration_ms || 0 };
+      }).filter(t => t.ts > 0);
+      if (timestamps.length === 0) return '';
+      const earliest = Math.min(...timestamps.map(t => t.ts));
+      const latest = Math.max(...timestamps.map(t => t.ts + t.dur));
+      const totalRange = latest - earliest || 1;
+      return `
+        <div class="trace-waterfall">
+          <div class="trace-waterfall-title">时间线</div>
+          ${flatSpans.slice(0, 30).map(s => {
+            const ts = s.started_at ? new Date(s.started_at).getTime() : 0;
+            if (!ts) return '';
+            const offset = (ts - earliest) / totalRange * 100;
+            const width = Math.max((s.duration_ms || 0) / totalRange * 100, 1);
+            const typeClass = s.span_type === 'llm_call' ? 'llm' : s.span_type === 'tool_call' ? 'tool' : s.span_type === 'session_turn' ? 'session' : 'step';
+            return `
+            <div class="trace-waterfall-row">
+              <span class="trace-waterfall-label">${s.span_type === 'llm_call' ? (s.model || 'LLM') : s.span_type === 'tool_call' ? (s.tool_name || 'tool') : s.span_type}</span>
+              <div class="trace-waterfall-track">
+                <div class="trace-waterfall-bar ${typeClass}" style="left:${offset}%;width:${width}%;"></div>
+              </div>
+              <span class="trace-waterfall-dur">${(s.duration_ms / 1000 || 0).toFixed(1)}s</span>
+            </div>`;
+          }).filter(Boolean).join('')}
+        </div>
+      `;
+    }
+
+    // Enhanced span tree with I/O
+    function renderEnhancedTree(node, depth) {
       if (!node) return '';
-      const typeClass = node.span_type === 'session_turn' ? 'session'
-        : node.span_type === 'llm_call' ? 'llm'
-        : node.span_type === 'agent_step' ? 'step' : 'tool';
-      const typeIcon = node.span_type === 'session_turn' ? '>'
-        : node.span_type === 'llm_call' ? '*'
-        : node.span_type === 'agent_step' ? '-'
-        : node.span_type === 'tool_call' ? '=' : '>';
       const typeLabel = node.span_type === 'session_turn' ? '会话'
         : node.span_type === 'llm_call' ? 'LLM'
         : node.span_type === 'agent_step' ? 'Agent'
         : node.span_type === 'tool_call' ? '工具' : node.span_type;
+      const typeIcon = node.span_type === 'session_turn' ? '▸'
+        : node.span_type === 'llm_call' ? '⚡'
+        : node.span_type === 'agent_step' ? '◆'
+        : node.span_type === 'tool_call' ? '🔧' : '▸';
       const nameInfo = node.span_type === 'llm_call' ? (node.model || '')
-        : node.span_type === 'tool_call' ? `${node.tool_name}`
-        : node.span_type === 'session_turn' ? '用户会话' : (node.model || '');
+        : node.span_type === 'tool_call' ? node.tool_name || ''
+        : node.span_type === 'session_turn' ? '' : (node.model || '');
       const tokenInfo = (node.input_tokens || node.output_tokens)
-        ? `${node.input_tokens || 0}+${node.output_tokens || 0}t` : '';
+        ? `${node.input_tokens || 0}+${node.output_tokens || 0} t` : '';
       const durInfo = node.duration_ms ? `${(node.duration_ms / 1000).toFixed(1)}s` : '';
+      const hasIO = (node.llm_input || node.llm_output || node.tool_input || node.tool_output);
+      const hasError = node.status === 'error' && node.error_message;
+      const spanId = node.span_id || 's' + Math.random().toString(36).slice(2, 8);
+      const errorClass = hasError ? 'has-error' : '';
       const children = node.children || [];
 
       let html = `
-        <div class="monitoring-span-item ${typeClass}" style="margin-left:${depth * 24}px;">
-          <span style="color:${node.span_type === 'session_turn' ? '#a29bfe' : node.span_type === 'llm_call' ? '#74b9ff' : node.span_type === 'agent_step' ? '#2dd4bf' : '#fbbf24'};font-size:13px;">${typeIcon}</span>
-          <span style="font-size:12px;color:#ccc;flex:1;">${typeLabel}: ${nameInfo}</span>
-          ${tokenInfo ? `<span class="mono" style="font-size:10px;color:#888;">${tokenInfo}</span>` : ''}
-          ${durInfo ? `<span class="mono" style="font-size:10px;color:#666;">${durInfo}</span>` : ''}
+        <div class="trace-span-row ${node.span_type === 'session_turn' ? 'session' : node.span_type === 'llm_call' ? 'llm' : node.span_type === 'tool_call' ? 'tool' : 'step'} ${errorClass}" style="margin-left:${depth * 20}px;">
+          <span class="trace-span-icon">${typeIcon}</span>
+          <span class="trace-span-label">${typeLabel}${nameInfo ? ': ' + nameInfo : ''}</span>
+          ${tokenInfo ? `<span style="font-size:10px;color:#888;white-space:nowrap;">${tokenInfo}</span>` : ''}
+          ${durInfo ? `<span style="font-size:10px;color:#666;white-space:nowrap;">${durInfo}</span>` : ''}
           <span class="monitoring-badge ${node.status === 'error' ? 'error' : 'success'}">${node.status === 'error' ? '失败' : '成功'}</span>
-        </div>`;
-      children.forEach(c => { html += renderSpanTree(c, depth + 1); });
+          ${hasIO ? `
+            <span class="trace-span-io-summary">
+              ${(node.llm_input || node.tool_input) ? `<span class="trace-span-io-badge" onclick="event.stopPropagation();toggleIOPanel('${spanId}','input')">📥 Input</span>` : ''}
+              ${(node.llm_output || node.tool_output) ? `<span class="trace-span-io-badge" onclick="event.stopPropagation();toggleIOPanel('${spanId}','output')">📤 Output</span>` : ''}
+            </span>
+          ` : ''}
+        </div>
+        ${hasIO ? `
+          <div class="trace-io-panels">
+            ${renderIOPanel({span_id: spanId, llm_input: node.llm_input, tool_input: node.tool_input, llm_output: node.llm_output, tool_output: node.tool_output, span_type: node.span_type}, 'input')}
+            ${renderIOPanel({span_id: spanId, llm_input: node.llm_input, tool_input: node.tool_input, llm_output: node.llm_output, tool_output: node.tool_output, span_type: node.span_type}, 'output')}
+          </div>
+        ` : ''}
+        ${hasError ? `
+          <div class="trace-error-block">
+            <div class="trace-error-header">⚠️ 错误信息</div>
+            <div class="trace-error-stack">${node.error_message}</div>
+          </div>
+        ` : ''}
+      `;
+      children.forEach(c => { html += renderEnhancedTree(c, depth + 1); });
       return html;
     }
 
+    // Build the full HTML
     body.innerHTML = `
       <div style="margin-bottom:12px;">
         <span class="monitoring-link" onclick="setupMonitoringPanel()">&larr; 返回列表</span>
       </div>
-      <h2 style="font-size:16px;font-weight:700;color:#fff;margin-bottom:4px;">Trace 详情</h2>
-      <p style="font-size:12px;color:#8888aa;margin-bottom:12px;">
-        <span class="mono" style="background:#2a2a42;padding:2px 8px;border-radius:4px;">${traceId.slice(0, 8)}</span>
-        <span style="color:#555;margin:0 8px;">|</span>${root.started_at ? root.started_at.slice(11, 19) : ''}
-        <span style="color:#555;margin:0 8px;">|</span><span style="color:#a29bfe;">${detail.total_tokens || 0} Token</span>
-        <span style="color:#555;margin:0 8px;">|</span>${(detail.total_duration_ms / 1000 || 0).toFixed(1)}秒
-      </p>
-      <div class="monitoring-stat-grid">
-        <div class="monitoring-stat-box"><div class="monitoring-stat-label">输入 Token</div><div class="monitoring-stat-value" style="color:#a29bfe;">${totalInput}</div></div>
-        <div class="monitoring-stat-box"><div class="monitoring-stat-label">输出 Token</div><div class="monitoring-stat-value" style="color:#74b9ff;">${totalOutput}</div></div>
-        <div class="monitoring-stat-box"><div class="monitoring-stat-label">总耗时</div><div class="monitoring-stat-value">${(detail.total_duration_ms / 1000 || 0).toFixed(1)}秒</div></div>
-        <div class="monitoring-stat-box"><div class="monitoring-stat-label">工具数</div><div class="monitoring-stat-value">${spans.filter(s => s.span_type === 'tool_call').length}</div></div>
+
+      ${root.user_message ? `
+      <div class="trace-user-msg">
+        💬 ${root.user_message}
       </div>
+      ` : ''}
+
+      <div class="trace-summary-bar">
+        <span class="trace-summary-item ${errorCount > 0 ? 'error' : 'ok'}">${errorCount > 0 ? '✗' : '✓'} ${detail.status || 'ok'}</span>
+        <span class="trace-summary-item" title="总耗时">⏱ ${(detail.total_duration_ms / 1000 || 0).toFixed(1)}s</span>
+        <span class="trace-summary-item" title="总 Token">🔢 ${detail.total_tokens || 0} tokens</span>
+        <span class="trace-summary-item" title="Span 数量">📊 ${spans.length} spans</span>
+        ${errorCount > 0 ? `<span class="trace-summary-item error">⚠️ ${errorCount} errors</span>` : ''}
+      </div>
+
+      ${renderWaterfall(spans)}
+
       <div class="monitoring-legend">
-        <span><span class="monitoring-legend-dot" style="background:#4a2a6a;"></span> 会话</span>
-        <span><span class="monitoring-legend-dot" style="background:#1a3a6a;"></span> LLM</span>
-        <span><span class="monitoring-legend-dot" style="background:#1a4a4a;"></span> Agent</span>
-        <span><span class="monitoring-legend-dot" style="background:#4a4a1a;"></span> 工具</span>
+        <span><span class="monitoring-legend-dot" style="background:#8b5cf6;"></span> 会话</span>
+        <span><span class="monitoring-legend-dot" style="background:#3b82f6;"></span> LLM</span>
+        <span><span class="monitoring-legend-dot" style="background:#10b981;"></span> Agent</span>
+        <span><span class="monitoring-legend-dot" style="background:#f59e0b;"></span> 工具</span>
       </div>
+
       <div class="monitoring-card">
-        ${renderSpanTree(root, 0)}
-      </div>
-      <div class="monitoring-card">
-        <div style="display:grid;grid-template-columns:70px 1fr;gap:6px 16px;font-size:12px;">
-          <span style="color:#8888aa;">Trace ID</span>
-          <span class="mono" style="color:#ccc;">${traceId}</span>
-          <span style="color:#8888aa;">总 Token</span>
-          <span style="color:#ccc;">${detail.total_tokens || 0}（输入 ${totalInput} + 输出 ${totalOutput}）</span>
+        <div style="font-size:13px;font-weight:600;color:#ddd;margin-bottom:8px;">调用树</div>
+        <div class="trace-span-tree">
+          ${renderEnhancedTree(root, 0)}
         </div>
+      </div>
+
+      <div class="trace-meta-card">
+        <span class="trace-meta-label">Trace ID</span>
+        <span class="trace-meta-value">${traceId}</span>
+        <span class="trace-meta-label">开始时间</span>
+        <span class="trace-meta-value">${root.started_at || ''}</span>
+        <span class="trace-meta-label">Token 详情</span>
+        <span class="trace-meta-value">输入 ${totalInput} + 输出 ${totalOutput} = ${detail.total_tokens || 0}</span>
+        <span class="trace-meta-label">Span 统计</span>
+        <span class="trace-meta-value">${spans.length} 个（LLM: ${llmCount} / Tool: ${toolCount} / Error: ${errorCount}）</span>
       </div>
     `;
   } catch (e) {
     console.error('Failed to load trace detail:', e);
     body.innerHTML = `<div style="text-align:center;padding:40px;"><span class="monitoring-link" onclick="setupMonitoringPanel()">&larr; 返回列表</span><div style="color:#f87171;margin-top:12px;">加载失败: ${e.message}</div></div>`;
   }
+}
+
+// ── Helper: toggle I/O panel in trace detail ──
+function toggleIOPanel(spanId, ioType) {
+  const panel = document.getElementById(`io-panel-${spanId}-${ioType}`);
+  const badge = document.querySelector(`.trace-span-io-badge[onclick*="${spanId}"][onclick*="${ioType}"]`);
+  if (!panel) return;
+  const isVisible = panel.style.display !== 'none';
+  panel.style.display = isVisible ? 'none' : 'block';
+  if (badge) badge.classList.toggle('active', !isVisible);
 }
 
 // ── Helper: switch monitoring tab ──

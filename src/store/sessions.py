@@ -57,16 +57,19 @@ class SessionRegistry:
                 "created_at": now,
                 "last_active": now,
                 "turn_count": 0,
+                "last_message": "",
             }
         )
         self._save()
 
-    def update(self, thread_id: str, *, turn_count: int | None = None) -> None:
+    def update(self, thread_id: str, *, turn_count: int | None = None, last_message: str | None = None) -> None:
         for s in self._data["sessions"]:
             if s["thread_id"] == thread_id:
                 s["last_active"] = _now_iso()
                 if turn_count is not None:
                     s["turn_count"] = turn_count
+                if last_message is not None:
+                    s["last_message"] = last_message
                 break
         self._save()
 
@@ -79,6 +82,18 @@ class SessionRegistry:
             self._save()
             return True
         return False
+
+    def remove_many(self, thread_ids: list[str]) -> int:
+        """批量删除会话。返回实际删除的数量。"""
+        ids = set(thread_ids)
+        before = len(self._data["sessions"])
+        self._data["sessions"] = [
+            s for s in self._data["sessions"] if s["thread_id"] not in ids
+        ]
+        removed = before - len(self._data["sessions"])
+        if removed:
+            self._save()
+        return removed
 
     def get(self, thread_id: str) -> dict | None:
         for s in self._data["sessions"]:

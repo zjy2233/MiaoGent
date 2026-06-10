@@ -197,6 +197,21 @@ class MemoryManager:
             except Exception as exc:
                 logger.warning("compress_if_needed: memory extraction failed for %s: %s", thread_id, exc)
 
+            # 4. 知识归并触发（raw facts 超过阈值时自动归并）
+            try:
+                raw_count = self._memory_store.count_raw_facts()
+                if raw_count > 30:
+                    from src.store.knowledge import KnowledgeConsolidator
+                    consolidator = KnowledgeConsolidator(self.compression_llm, self._memory_store)
+                    ck_result = await consolidator.consolidate()
+                    if ck_result.get("consolidated"):
+                        logger.info(
+                            "compress_if_needed: consolidated %d facts (round %d) for %s",
+                            ck_result.get("count", 0), ck_result.get("round_id", 0), thread_id,
+                        )
+            except Exception as exc:
+                logger.warning("compress_if_needed: knowledge consolidation failed for %s: %s", thread_id, exc)
+
             if compressed:
                 logger.info("compress_if_needed: completed for %s (%d msgs → summary)", thread_id, len(to_compress))
 

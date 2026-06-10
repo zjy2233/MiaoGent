@@ -95,10 +95,23 @@ async def init_agent(app: web.Application) -> None:
 
 
 async def close_agent(app: web.Application) -> None:
+    # 退出时触发知识归并
+    try:
+        await get_api().trigger_consolidation()
+    except Exception as exc:
+        logger.warning("Consolidation on exit failed: %s", exc)
+
     conn = app.get("_db_conn")
     if conn is not None:
         await conn.close()
         logger.info("Database connection closed")
+
+    # 退出时清理 Agent 临时文件
+    try:
+        from src.core.miaogent_home import cleanup_temp_dir
+        cleanup_temp_dir()
+    except Exception as exc:
+        logger.warning("Temp file cleanup failed: %s", exc)
 
 
 def json_response(data: Any, *, status: int = 200) -> Response:
@@ -132,7 +145,8 @@ async def health(request: Request) -> Response:
 
 
 async def get_sessions(request: Request) -> Response:
-    return json_response(get_api().get_sessions())
+    sessions = await get_api().get_sessions()
+    return json_response(sessions)
 
 
 async def post_sessions(request: Request) -> Response:
@@ -143,6 +157,14 @@ async def post_sessions(request: Request) -> Response:
 async def delete_session(request: Request) -> Response:
     thread_id = request.match_info["thread_id"]
     return json_response({"deleted": get_api().delete_session(thread_id)})
+
+
+async def delete_sessions_batch(request: Request) -> Response:
+    body = await json_request(request)
+    thread_ids = body.get("thread_ids", [])
+    if not isinstance(thread_ids, list) or not thread_ids:
+        return json_response({"error": "thread_ids 必须是非空数组"}, status=400)
+    return json_response(get_api().delete_sessions_batch(thread_ids))
 
 
 async def get_session_messages(request: Request) -> Response:
@@ -189,6 +211,12 @@ async def post_profile(request: Request) -> Response:
 
 async def get_tools(request: Request) -> Response:
     return json_response(get_api().get_tools())
+
+
+async def post_consolidate(request: Request) -> Response:
+    """手动触发知识归并。"""
+    result = await get_api().trigger_consolidation()
+    return json_response(result)
 
 
 # ── Skill 查询（只读，按需加载由 agent 的 load_skill 工具完成） ──
@@ -355,6 +383,18 @@ async def get_traces_by_session(request: Request) -> Response:
     return json_response(get_api().get_traces_by_session(session_id))
 
 
+async def get_trace_count(request: Request) -> Response:
+    q = request.query.get("q", "")
+    status = request.query.get("status", "")
+    return json_response({"count": get_api().get_trace_count(q=q, status=status)})
+
+
+async def get_token_top_traces(request: Request) -> Response:
+    days = int(request.query.get("days", "3"))
+    limit = int(request.query.get("limit", "10"))
+    return json_response(get_api().get_token_top_traces(days=days, limit=limit))
+
+
 # ── 路由注册 ──
 
 
@@ -362,6 +402,7 @@ def setup_routes(app: web.Application) -> None:
     app.router.add_route("GET", "/health", health)
     app.router.add_route("GET", "/api/sessions", get_sessions)
     app.router.add_route("POST", "/api/sessions", post_sessions)
+    app.router.add_route("POST", "/api/sessions/batch-delete", delete_sessions_batch)
     app.router.add_route("DELETE", "/api/sessions/{thread_id}", delete_session)
     app.router.add_route("GET", "/api/sessions/{thread_id}/messages", get_session_messages)
     app.router.add_route("POST", "/api/sessions/{thread_id}/compress", post_session_compress)
@@ -376,6 +417,7 @@ def setup_routes(app: web.Application) -> None:
     app.router.add_route("GET", "/api/tools", get_tools)
     app.router.add_route("GET", "/api/skills", get_skills)
     app.router.add_route("GET", "/api/skills/{name}", get_skill_detail)
+    app.router.add_route("POST", "/api/consolidate", post_consolidate)
     app.router.add_route("POST", "/api/chat/resume", post_resume)
     app.router.add_route("POST", "/api/chat/resume/stream", post_resume_stream)
     app.router.add_route("GET", "/api/traces", get_traces)
@@ -385,6 +427,8 @@ def setup_routes(app: web.Application) -> None:
     app.router.add_route("GET", "/api/traces/{trace_id}", get_trace_detail)
     app.router.add_route("GET", "/api/traces/{trace_id}/spans", get_trace_spans)
     app.router.add_route("GET", "/api/traces/sessions/{session_id}", get_traces_by_session)
+    app.router.add_route("GET", "/api/traces/count", get_trace_count)
+    app.router.add_route("GET", "/api/traces/token-top", get_token_top_traces)
 
 
 # ── 入口 ──

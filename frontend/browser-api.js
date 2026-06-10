@@ -109,6 +109,11 @@
     getSessions: () => fetchJSON(`${BASE_URL}/api/sessions`),
     createSession: () => fetchJSON(`${BASE_URL}/api/sessions`, { method: 'POST' }),
     deleteSession: (id) => fetchJSON(`${BASE_URL}/api/sessions/${id}`, { method: 'DELETE' }),
+    deleteSessionsBatch: (ids) => fetchJSON(`${BASE_URL}/api/sessions/batch-delete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ thread_ids: ids }),
+    }),
     getMessages: (tid) => fetchJSON(`${BASE_URL}/api/sessions/${tid}/messages`),
     compressSession: (tid) => fetchJSON(`${BASE_URL}/api/sessions/${tid}/compress`, { method: 'POST' }),
     sendChat: (tid, msg) => fetchJSON(`${BASE_URL}/api/chat`, {
@@ -139,10 +144,11 @@
     getTools: () => fetchJSON(`${BASE_URL}/api/tools`),
     getSkills: () => fetchJSON(`${BASE_URL}/api/skills`),
     getSkillDetail: (name) => fetchJSON(`${BASE_URL}/api/skills/${name}`),
+    triggerConsolidation: () => fetchJSON(`${BASE_URL}/api/consolidate`, { method: 'POST' }),
 
     // ── IPC 窗口控制（浏览器模式下为 noop） ──
     ballDragMove: () => {},
-    resizeBall: () => {},
+    panelDragMove: () => {},
     openPanel: (name) => {
       // 浏览器模式: 跳转到 ?panel=<name>
       const url = new URL(window.location);
@@ -175,6 +181,19 @@
     getTraceDailyStats: () => fetchJSON(`${BASE_URL}/api/traces/stats/daily`),
     getTraceCacheStats: () => fetchJSON(`${BASE_URL}/api/traces/stats/cache`),
     getTracesBySession: (sessionId) => fetchJSON(`${BASE_URL}/api/traces/sessions/${sessionId}`),
+    getTraceCount: (q, status) => {
+      const params = new URLSearchParams();
+      if (q) params.set('q', q);
+      if (status) params.set('status', status);
+      const qs = params.toString();
+      return fetchJSON(`${BASE_URL}/api/traces/count${qs ? '?' + qs : ''}`).then(r => r.count);
+    },
+    getTokenTopTraces: (days, limit) => {
+      const params = new URLSearchParams();
+      if (days) params.set('days', days);
+      if (limit) params.set('limit', limit);
+      return fetchJSON(`${BASE_URL}/api/traces/token-top?${params.toString()}`);
+    },
   };
 
   console.log('[browser-api] window.api initialized for browser mode');

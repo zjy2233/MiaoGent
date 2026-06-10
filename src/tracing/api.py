@@ -53,3 +53,9 @@ class TracingAPI:
 
     def get_traces_by_session(self, session_id: str) -> list[dict[str, Any]]:
         return self.store.get_traces_by_session(session_id)
+
+    def get_trace_count(self, q: str = "", status: str = "") -> int:
+        return self.store.get_trace_count(q=q, status=status)
+
+    def get_token_top_traces(self, days: int = 3, limit: int = 10) -> list[dict[str, Any]]:
+        return self.store.get_token_top_traces(days=days, limit=limit)

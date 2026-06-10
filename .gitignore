@@ -29,9 +29,23 @@ dist/
 build/
 *.egg-info/
 
+# Agent 临时文件
+temp_*.py
+.superpowers/
+
+# Git worktrees
+.worktrees/
+
 # SQLite WAL 工件
 *.db-shm
 *.db-wal
+
+# Node
+node_modules/
+frontend/electron/node_modules/
+
+# 临时文件
+temp/
 
 # 运行时数据
 data/*
@@ -39,3 +53,6 @@ data/*
 !data/temp/
 !data/temp/**
 data_demo/
+
+# Electron 构建产物
+frontend/electron/dist/

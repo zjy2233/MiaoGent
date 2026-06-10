@@ -73,8 +73,23 @@ class TraceStore:
                         if "duplicate column" not in str(e).lower():
                             raise
                 conn.commit()
+                self._migrate_schema(conn)
+                conn.commit()
             finally:
                 conn.close()
+
+    def _migrate_schema(self, conn: sqlite3.Connection) -> None:
+        """Add new columns if they don't exist (idempotent)."""
+        migrations = [
+            "ALTER TABLE spans ADD COLUMN llm_input TEXT DEFAULT ''",
+            "ALTER TABLE spans ADD COLUMN llm_output TEXT DEFAULT ''",
+            "ALTER TABLE spans ADD COLUMN tool_output TEXT DEFAULT ''",
+        ]
+        existing = {row[1] for row in conn.execute("PRAGMA table_info(spans)")}
+        for sql in migrations:
+            col_name = sql.split("ADD COLUMN ")[1].split(" ")[0]
+            if col_name not in existing:
+                conn.execute(sql)
 
     @staticmethod
     def _row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
@@ -87,6 +102,7 @@ class TraceStore:
             "cache_hit_tokens", "cache_miss_tokens", "tool_name",
             "tool_input", "status", "error_message", "started_at", "ended_at",
             "duration_ms", "user_message",
+            "llm_input", "llm_output", "tool_output",
         ]
         placeholders = ", ".join("?" for _ in cols)
         names = ", ".join(cols)
@@ -110,6 +126,7 @@ class TraceStore:
                     "cache_hit_tokens", "cache_miss_tokens", "tool_name",
                     "tool_input", "status", "error_message", "started_at", "ended_at",
                     "duration_ms", "user_message",
+                    "llm_input", "llm_output", "tool_output",
                 ]
                 placeholders = ", ".join("?" for _ in cols)
                 names = ", ".join(cols)
@@ -155,7 +172,25 @@ class TraceStore:
                 )
                 params.extend([limit, offset])
                 cursor = conn.execute(sql, params)
-                return [self._row_to_dict(row) for row in cursor.fetchall()]
+                rows = [self._row_to_dict(row) for row in cursor.fetchall()]
+                # 从所有 span（llm_call 等）汇总每个 trace 的 token 数
+                if rows:
+                    trace_ids = [r["trace_id"] for r in rows]
+                    placeholders = ", ".join("?" for _ in trace_ids)
+                    token_rows = conn.execute(
+                        f"SELECT trace_id, "
+                        f"COALESCE(SUM(input_tokens), 0) as total_input, "
+                        f"COALESCE(SUM(output_tokens), 0) as total_output "
+                        f"FROM spans WHERE trace_id IN ({placeholders}) "
+                        f"GROUP BY trace_id",
+                        trace_ids,
+                    ).fetchall()
+                    token_map = {r[0]: (r[1], r[2]) for r in token_rows}
+                    for r in rows:
+                        inp, out = token_map.get(r["trace_id"], (0, 0))
+                        r["input_tokens"] = inp
+                        r["output_tokens"] = out
+                return rows
             finally:
                 conn.close()
 
@@ -169,7 +204,24 @@ class TraceStore:
                     "ORDER BY started_at DESC",
                     (session_id,),
                 )
-                return [self._row_to_dict(row) for row in cursor.fetchall()]
+                rows = [self._row_to_dict(row) for row in cursor.fetchall()]
+                if rows:
+                    trace_ids = [r["trace_id"] for r in rows]
+                    placeholders = ", ".join("?" for _ in trace_ids)
+                    token_rows = conn.execute(
+                        f"SELECT trace_id, "
+                        f"COALESCE(SUM(input_tokens), 0) as total_input, "
+                        f"COALESCE(SUM(output_tokens), 0) as total_output "
+                        f"FROM spans WHERE trace_id IN ({placeholders}) "
+                        f"GROUP BY trace_id",
+                        trace_ids,
+                    ).fetchall()
+                    token_map = {r[0]: (r[1], r[2]) for r in token_rows}
+                    for r in rows:
+                        inp, out = token_map.get(r["trace_id"], (0, 0))
+                        r["input_tokens"] = inp
+                        r["output_tokens"] = out
+                return rows
             finally:
                 conn.close()
 
@@ -244,6 +296,54 @@ class TraceStore:
             try:
                 row = conn.execute("SELECT COUNT(*) FROM spans").fetchone()
                 return row[0] if row else 0
+            finally:
+                conn.close()
+
+    def get_trace_count(self, q: str = "", status: str = "") -> int:
+        """Return total count of session_turn traces matching filters."""
+        with self._lock:
+            conn = sqlite3.connect(self._db_path)
+            try:
+                conditions = ["span_type = 'session_turn'"]
+                params: list[Any] = []
+                if q:
+                    conditions.append("(user_message LIKE ? OR trace_id LIKE ?)")
+                    params.extend([f"%{q}%", f"%{q}%"])
+                if status:
+                    conditions.append("status = ?")
+                    params.append(status)
+                where = " AND ".join(conditions)
+                row = conn.execute(
+                    f"SELECT COUNT(*) FROM spans WHERE {where}", params
+                ).fetchone()
+                return row[0] if row else 0
+            finally:
+                conn.close()
+
+    def get_token_top_traces(self, days: int = 3, limit: int = 10) -> list[dict[str, Any]]:
+        """Return top N traces by total tokens in last N days, sorted by tokens DESC."""
+        with self._lock:
+            conn = sqlite3.connect(self._db_path)
+            try:
+                conn.row_factory = sqlite3.Row
+                cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+                total_expr = (
+                    "COALESCE(SUM(t.input_tokens), 0) + COALESCE(SUM(t.output_tokens), 0)"
+                )
+                rows = conn.execute(
+                    "SELECT s.trace_id, s.session_id, s.user_message, s.started_at, s.status, "
+                    "  s.duration_ms, "
+                    "  COALESCE(SUM(t.input_tokens), 0) as input_tokens, "
+                    "  COALESCE(SUM(t.output_tokens), 0) as output_tokens "
+                    "FROM spans s "
+                    "JOIN spans t ON t.trace_id = s.trace_id "
+                    "WHERE s.span_type = 'session_turn' AND s.started_at >= ? "
+                    "GROUP BY s.trace_id "
+                    f"ORDER BY {total_expr} DESC "
+                    "LIMIT ?",
+                    (cutoff, limit),
+                ).fetchall()
+                return [self._row_to_dict(row) for row in rows]
             finally:
                 conn.close()
 

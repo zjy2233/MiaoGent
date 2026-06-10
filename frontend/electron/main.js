@@ -1,9 +1,9 @@
 /**
  * Agent Shell — Electron Main Process
  *
- * 双窗口架构 + 动态尺寸 Ball Window（单例模式）
- * - Ball: 160x160 常态 / 260x210 悬停展开菜单
- * - Panel: 420x520 独立窗口，点击菜单项创建
+ * 双窗口架构（单例模式）
+ * - Ball: 280x220 常驻透明浮窗（不再动态 resize）
+ * - Panel: 420x520 独立面板窗口，启动时预创建，show/hide 切换
  */
 
 const { app, BrowserWindow, ipcMain, screen } = require('electron');
@@ -12,15 +12,14 @@ const fs = require('fs');
 const { spawn, execSync } = require('child_process');
 
 const PORT = 18794;
-const BALL_W = 148;
-const BALL_H = 155;
-const BALL_W_EXPANDED = 280;
-const BALL_H_EXPANDED = 220;
+const BALL_W = 280;
+const BALL_H = 220;
 const PANEL_W = 420;
 const PANEL_H = 520;
 
 let ballWindow = null;
 let panelWindow = null;
+let panelPreMaxBounds = null;
 let pythonServer = null;
 
 // 球位置持久化
@@ -109,7 +108,7 @@ function stopPythonServer() {
   pythonServer = null;
 }
 
-// ── Ball Window ────────────────────────────────────────────────────
+// ── Ball Window（固定 280x220，不再动态 resize）────────────────────
 
 function createBallWindow() {
   const pos = loadBallPos();
@@ -118,6 +117,7 @@ function createBallWindow() {
     x: pos.x, y: pos.y,
     frame: false, transparent: true, alwaysOnTop: true,
     resizable: false, skipTaskbar: true, show: false,
+    backgroundColor: '#00000000',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true, nodeIntegration: false,
@@ -125,87 +125,177 @@ function createBallWindow() {
     },
   });
   ballWindow.loadFile(path.join(__dirname, '..', 'index.html'));
-  ballWindow.once('ready-to-show', () => ballWindow.show());
+
+  ballWindow.once('ready-to-show', () => {
+    ballWindow.show();
+  });
   ballWindow.on('closed', () => { ballWindow = null; });
 }
 
-// ── Panel Window ──────────────────────────────────────────────────
+// ── Panel Window（启动时预创建，show/hide 切换）────────────────
 
-function createPanelWindow(panelName) {
-  if (panelWindow) {
-    // 复用已有面板窗口，加载新面板
-    panelWindow.loadFile(path.join(__dirname, '..', 'index.html'), {
-      query: { panel: panelName },
-    });
-    panelWindow.focus();
-    return;
-  }
-  const { width: screenW, height: screenH } = screen.getPrimaryDisplay().workAreaSize;
+function precreatePanelWindow() {
+  const { width: screenW, height: screenH } = screen.getPrimaryDisplay().workArea;
   const x = Math.round((screenW - PANEL_W) / 2);
   const y = Math.round((screenH - PANEL_H) / 2);
   panelWindow = new BrowserWindow({
     width: PANEL_W, height: PANEL_H,
     x, y,
-    frame: false, show: false,
+    frame: false, thickFrame: false, show: false,
+    backgroundColor: '#1e1e32',
+    paintWhenInitiallyHidden: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true, nodeIntegration: false, sandbox: false,
     },
   });
+  panelWindow.setBackgroundColor('#1e1e32');
   panelWindow.loadFile(path.join(__dirname, '..', 'index.html'), {
-    query: { panel: panelName },
+    query: { panel: 'chat' },
   });
-  panelWindow.once('ready-to-show', () => panelWindow.show());
-  panelWindow.on('closed', () => { panelWindow = null; });
+  // 预建窗口就绪后不立即显示，等用户点击菜单
+  panelWindow.once('ready-to-show', () => {
+    // 保持隐藏，预建完成
+  });
+  panelWindow.on('close', (e) => {
+    // 用户点击关闭 → 隐藏而不是销毁
+    e.preventDefault();
+    panelWindow.hide();
+  });
+  panelWindow.on('closed', () => { panelWindow = null; panelPreMaxBounds = null; });
+}
+
+// ── 统一错误日志 ──────────────────────────────────────────────────
+
+function logError(context, err) {
+  const ts = new Date().toISOString();
+  console.error(`[agent-shell][${ts}][${context}]`, err instanceof Error ? err.message : String(err));
+  if (err instanceof Error && err.stack) {
+    console.error(`[agent-shell][${ts}][${context}] stack:`, err.stack);
+  }
+}
+
+// 全局未捕获异常
+process.on('uncaughtException', (err) => {
+  logError('uncaughtException', err);
+});
+process.on('unhandledRejection', (reason) => {
+  logError('unhandledRejection', reason instanceof Error ? reason : new Error(String(reason)));
+});
+
+// ── IPC handler 包装器 ───────────────────────────────────────────
+
+function safeHandler(name, fn) {
+  ipcMain.on(name, (...args) => {
+    try {
+      const ret = fn(...args);
+      if (ret && typeof ret.catch === 'function') {
+        ret.catch(err => logError('ipc:' + name, err));
+      }
+    } catch (err) {
+      logError('ipc:' + name, err);
+    }
+  });
 }
 
 // ── IPC ───────────────────────────────────────────────────────────
 
 // 窗口拖动
-ipcMain.on('ball-drag-move', (_event, dx, dy) => {
+safeHandler('ball-drag-move', (_event, dx, dy) => {
   if (!ballWindow) return;
-  try {
-    const [x, y] = ballWindow.getPosition();
-    const nx = Math.round(x + (typeof dx === 'number' ? dx : 0));
-    const ny = Math.round(y + (typeof dy === 'number' ? dy : 0));
-    ballWindow.setPosition(nx, ny);
-    saveBallPos(nx, ny);
-  } catch (err) { console.error('[agent-shell] drag error:', err); }
+  const [x, y] = ballWindow.getPosition();
+  const nx = Math.round(x + (typeof dx === 'number' ? dx : 0));
+  const ny = Math.round(y + (typeof dy === 'number' ? dy : 0));
+  ballWindow.setPosition(nx, ny);
+  saveBallPos(nx, ny);
 });
 
-// 窗口尺寸（悬停展开/收缩）
-ipcMain.on('resize-ball', (_event, w, h) => {
-  if (!ballWindow) return;
-  try {
-    ballWindow.setSize(Math.round(w), Math.round(h));
-  } catch (err) { console.error('[agent-shell] resize error:', err); }
+safeHandler('panel-drag-move', (_event, dx, dy) => {
+  if (!panelWindow || panelPreMaxBounds) return;
+  const [x, y] = panelWindow.getPosition();
+  const nx = Math.round(x + (typeof dx === 'number' ? dx : 0));
+  const ny = Math.round(y + (typeof dy === 'number' ? dy : 0));
+  panelWindow.setPosition(nx, ny);
 });
 
-// 面板控制
-ipcMain.on('open-panel', (_event, name) => {
-  if (panelWindow) {
-    // 面板已存在 → IPC 通知切换，避免 loadFile 白屏闪烁
-    panelWindow.webContents.send('switch-panel', name);
-    panelWindow.focus();
-  } else {
-    createPanelWindow(name);
-  }
+// 面板 show/hide（预建窗口，不再每次创建）
+safeHandler('open-panel', (_event, name) => {
+  if (!panelWindow) return;
+  const { width: screenW, height: screenH } = screen.getPrimaryDisplay().workArea;
+  const x = Math.round((screenW - PANEL_W) / 2);
+  const y = Math.round((screenH - PANEL_H) / 2);
+  panelWindow.setPosition(x, y);
+  panelWindow.webContents.send('switch-panel', name);
+  panelWindow.show();
+  panelWindow.focus();
 });
-ipcMain.on('close-panel', () => { if (panelWindow) panelWindow.close(); });
+safeHandler('close-panel', () => { if (panelWindow) panelWindow.hide(); });
 
 // 双击标题栏切换最大化/还原
-ipcMain.on('toggle-maximize', () => {
+// 策略：纯色遮罩覆盖内容 → resize → 遮罩淡出。
+// 用实色 div 代替 opacity/filter，避免 GPU 合成层在 resize 时产生黑闪。
+safeHandler('toggle-maximize', async () => {
   if (!panelWindow) return;
-  if (panelWindow.isMaximized()) {
-    panelWindow.unmaximize();
+
+  if (panelPreMaxBounds) {
+    // ── 还原 ──
+    await panelWindow.webContents.executeJavaScript(`
+      (() => {
+        const c = document.createElement('div');
+        c.id = '_resize-curtain';
+        c.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#1e1e32';
+        document.body.appendChild(c);
+      })();
+      new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    `);
+    panelWindow.setBounds(panelPreMaxBounds);
+    panelPreMaxBounds = null;
+    await new Promise(r => setTimeout(r, 120));
+    await panelWindow.webContents.executeJavaScript(`
+      (() => {
+        const c = document.getElementById('_resize-curtain');
+        if (!c) return;
+        c.style.transition = 'opacity 0.3s ease-out';
+        c.style.opacity = '0';
+        setTimeout(() => c.remove(), 320);
+      })();
+    `);
   } else {
-    panelWindow.maximize();
+    // ── 最大化 ──
+    const display = screen.getPrimaryDisplay();
+    if (!display) return;
+    const b = panelWindow.getBounds();
+    panelPreMaxBounds = { x: b.x, y: b.y, width: b.width, height: b.height };
+    const { x, y, width, height } = display.workArea;
+
+    await panelWindow.webContents.executeJavaScript(`
+      (() => {
+        const c = document.createElement('div');
+        c.id = '_resize-curtain';
+        c.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#1e1e32';
+        document.body.appendChild(c);
+      })();
+      new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+    `);
+    panelWindow.setBounds({ x, y, width, height });
+    await new Promise(r => setTimeout(r, 150));
+    await panelWindow.webContents.executeJavaScript(`
+      (() => {
+        const c = document.getElementById('_resize-curtain');
+        if (!c) return;
+        c.style.transition = 'opacity 0.3s ease-out';
+        c.style.opacity = '0';
+        setTimeout(() => c.remove(), 320);
+      })();
+    `);
   }
 });
 
-ipcMain.on('quit-app', () => {
-  // 先关闭面板窗口（触发 pagehide → compress），再退出
-  if (panelWindow) panelWindow.close();
+safeHandler('quit-app', () => {
+  if (panelWindow) {
+    panelWindow.removeAllListeners('close');
+    panelWindow.close();
+  }
   setTimeout(() => app.quit(), 500);
 });
 
@@ -227,6 +317,7 @@ app.whenReady().then(async () => {
   try { await startPythonServer(); console.log('[agent-shell] Python ready'); }
   catch (err) { console.error('[agent-shell] Python failed:', err); }
   createBallWindow();
+  precreatePanelWindow();  // 后台预建面板窗口
 });
 
 app.on('window-all-closed', () => {});

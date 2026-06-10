@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import json
 import os
 from dataclasses import MISSING, fields
@@ -150,11 +151,42 @@ class Api:
 
     # ── 会话管理 ──
 
-    def get_sessions(self) -> list[dict]:
-        return SessionRegistry(self._sessions_path).list()
+    async def get_sessions(self) -> list[dict]:
+        registry = SessionRegistry(self._sessions_path)
+        sessions = registry.list()
+        # 回填已有轮次但无消息摘要的旧会话
+        if self._agent is not None:
+            need = [s for s in sessions if s.get("turn_count", 0) > 0 and not s.get("last_message")]
+            if need:
+                async def _fetch_last(thread_id: str) -> str:
+                    try:
+                        state = await self._agent.aget_state({"configurable": {"thread_id": thread_id}})
+                        for m in reversed(list(state.values.get("messages", []) or [])):
+                            if getattr(m, "type", "") != "human":
+                                continue
+                            content = m.content
+                            if isinstance(content, list):
+                                chunks = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+                                content = "".join(chunks)
+                            text = str(content).strip()[:60]
+                            if text:
+                                return text
+                    except Exception:
+                        pass
+                    return ""
+                results = await asyncio.gather(*[_fetch_last(s["thread_id"]) for s in need])
+                for s, msg in zip(need, results):
+                    if msg:
+                        s["last_message"] = msg
+                        registry.update(s["thread_id"], last_message=msg)
+        return sessions
 
     def delete_session(self, thread_id: str) -> bool:
         return SessionRegistry(self._sessions_path).remove(thread_id)
+
+    def delete_sessions_batch(self, thread_ids: list[str]) -> dict:
+        removed = SessionRegistry(self._sessions_path).remove_many(thread_ids)
+        return {"deleted_count": removed}
 
     # ── 设置读写 ──
 
@@ -265,6 +297,28 @@ class Api:
             return {"compressed": ok}
         except Exception as exc:
             return {"compressed": False, "reason": str(exc)}
+
+    async def trigger_consolidation(self) -> dict:
+        """触发知识归并（事件驱动，非阻塞式）。
+
+        Called on panel close / session switch / app exit.
+        """
+        if self._memory_manager is None:
+            return {"consolidated": False, "reason": "MemoryManager 未就绪"}
+        try:
+            llm = getattr(self._memory_manager, "compression_llm", None)
+            if llm is None:
+                return {"consolidated": False, "reason": "LLM 未就绪"}
+            from src.store.knowledge import KnowledgeConsolidator
+            consolidator = KnowledgeConsolidator(llm, self._memory_store)
+            result = await consolidator.consolidate()
+            return {
+                "consolidated": result.get("consolidated", False),
+                "count": result.get("count", 0),
+                "skip_reason": result.get("skip_reason"),
+            }
+        except Exception as exc:
+            return {"consolidated": False, "error": str(exc)}
 
     # ── 聊天功能（HTTP 服务器模式） ──
 
@@ -414,10 +468,25 @@ class Api:
             state = await self._agent.aget_state(config)
             messages = list(state.values.get("messages", []) or [])
             turns = sum(1 for m in messages if getattr(m, "type", "") == "human")
+            # 提取最后一条用户消息摘要（取纯文本前 60 字）
+            last_msg = ""
+            for m in reversed(messages):
+                if getattr(m, "type", "") != "human":
+                    continue
+                content = m.content
+                if isinstance(content, list):
+                    chunks = []
+                    for block in content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            chunks.append(block.get("text", ""))
+                    content = "".join(chunks)
+                last_msg = str(content).strip()[:60]
+                if last_msg:
+                    break
         except Exception:
             return
         registry = SessionRegistry(self._sessions_path)
-        registry.update(thread_id, turn_count=turns)
+        registry.update(thread_id, turn_count=turns, last_message=last_msg)
 
     async def chat_stream(self, thread_id: str, message: str, resume: bool | None = None):
         """流式聊天 async generator。
@@ -455,7 +524,8 @@ class Api:
                     # ── Tracing spans ──
                     if tracer is not None:
                         if kind == "on_chat_model_start":
-                            sid = tracer.start_span("llm_call", model=event.get("name", "") or "chat_model")
+                            sid = tracer.start_span("llm_call", model=event.get("name", "") or "chat_model",
+                                                    llm_input=_serialize_llm_input(event["data"]["input"]))
                             run_id_to_span_id[run_id] = sid
                         elif kind == "on_chat_model_end":
                             sid = run_id_to_span_id.pop(run_id, None)
@@ -465,9 +535,10 @@ class Api:
                                     usage = resp.get("usage_metadata") or {}
                                 else:
                                     usage = getattr(resp, "usage_metadata", {})
-                                if isinstance(usage, dict) and usage:
-                                    span = tracer._spans.get(sid)
-                                    if span:
+                                span = tracer._spans.get(sid)
+                                if span:
+                                    span.llm_output = _serialize_llm_output(resp)
+                                    if isinstance(usage, dict) and usage:
                                         span.input_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
                                         span.output_tokens = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
                                         span.cache_hit_tokens = usage.get("prompt_cache_hit_tokens", 0) or usage.get("cache_read_input_tokens", 0)
@@ -485,6 +556,8 @@ class Api:
                         elif kind == "on_tool_end":
                             sid = run_id_to_span_id.pop(run_id, None)
                             if sid:
+                                if (span := tracer._spans.get(sid)):
+                                    span.tool_output = _short_repr(event["data"].get("output"), 4096)
                                 tracer.end_span(sid)
                         elif kind == "on_tool_error":
                             sid = run_id_to_span_id.pop(run_id, None)
@@ -612,19 +685,22 @@ class Api:
                         tracer.start_span("session_turn", user_message=message)
                     elif kind == "on_chat_model_start":
                         name = event.get("name", "") or "chat_model"
-                        sid = tracer.start_span("llm_call", model=name)
+                        sid = tracer.start_span("llm_call", model=name,
+                                                llm_input=_serialize_llm_input(event["data"]["input"]))
                         run_id_to_span_id[run_id] = sid
                     elif kind == "on_chat_model_end":
                         sid = run_id_to_span_id.pop(run_id, None)
                         if sid:
                             resp = event.get("data", {}).get("output", {})
+                            span = tracer._spans.get(sid)
+                            if span:
+                                span.llm_output = _serialize_llm_output(resp)
                             # Try both AIMessage.usage_metadata and dict access
                             if isinstance(resp, dict):
                                 usage = resp.get("usage_metadata") or {}
                             else:
                                 usage = getattr(resp, "usage_metadata", {})
                             if isinstance(usage, dict) and usage:
-                                span = tracer._spans.get(sid)
                                 if span:
                                     span.input_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
                                     span.output_tokens = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
@@ -645,6 +721,8 @@ class Api:
                     elif kind == "on_tool_end":
                         sid = run_id_to_span_id.pop(run_id, None)
                         if sid:
+                            if (span := tracer._spans.get(sid)):
+                                span.tool_output = _short_repr(event["data"].get("output"), 4096)
                             tracer.end_span(sid)
                     elif kind == "on_tool_error":
                         sid = run_id_to_span_id.pop(run_id, None)
@@ -835,6 +913,72 @@ class Api:
         if self._tracing_api is None:
             return []
         return self._tracing_api.get_traces_by_session(session_id)
+
+    def get_trace_count(self, q: str = "", status: str = "") -> int:
+        if self._tracing_api is None:
+            return 0
+        return self._tracing_api.get_trace_count(q=q, status=status)
+
+    def get_token_top_traces(self, days: int = 3, limit: int = 10) -> list[dict]:
+        if self._tracing_api is None:
+            return []
+        return self._tracing_api.get_token_top_traces(days=days, limit=limit)
+
+
+def _serialize_llm_input(input_data: Any, limit: int = 8192) -> str:
+    """Serialize LLM messages array to JSON string, truncated to limit chars."""
+    try:
+        if isinstance(input_data, dict):
+            msgs = input_data.get("messages", [])
+        elif isinstance(input_data, list):
+            msgs = input_data
+        else:
+            msgs = []
+        if msgs and isinstance(msgs, list) and len(msgs) > 0 and isinstance(msgs[0], list):
+            msgs = msgs[0]
+        serializable: list[dict] = []
+        for m in msgs:
+            if hasattr(m, "type") and hasattr(m, "content"):
+                content = m.content
+                if isinstance(content, list):
+                    content = "".join(
+                        b.get("text", "")
+                        for b in content
+                        if isinstance(b, dict) and b.get("type") == "text"
+                    )
+                serializable.append({"type": m.type, "content": str(content)[:2000]})
+            elif isinstance(m, dict):
+                serializable.append(m)
+            else:
+                serializable.append({"type": "unknown", "content": str(m)[:2000]})
+        result = json.dumps(serializable, ensure_ascii=False, default=str)
+        return result if len(result) <= limit else result[:limit]
+    except Exception:
+        return str(input_data)[:limit]
+
+
+def _serialize_llm_output(output: Any, limit: int = 4096) -> str:
+    """Serialize LLM output to JSON, truncated to limit chars."""
+    try:
+        content = None
+        if hasattr(output, "content"):
+            content = output.content
+        elif isinstance(output, dict):
+            content = output.get("content")
+        if content is None:
+            return str(output)[:limit]
+        if isinstance(content, str):
+            return json.dumps({"content": content[:limit]}, ensure_ascii=False)
+        if isinstance(content, list):
+            text = "".join(
+                b.get("text", "")
+                for b in content
+                if isinstance(b, dict) and b.get("type") == "text"
+            )
+            return json.dumps({"content": text[:limit]}, ensure_ascii=False)
+        return json.dumps({"content": str(content)[:limit]}, ensure_ascii=False)
+    except Exception:
+        return str(output)[:limit]
 
 
 def _short_repr(x: Any, limit: int = 200) -> str:

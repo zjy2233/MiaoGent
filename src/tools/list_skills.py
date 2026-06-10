@@ -42,7 +42,7 @@ def build_list_skills_tool(
 
             lines: list[str] = []
             for s in all_skills:
-                tool_names = [t.__name__ if hasattr(t, "__name__") else str(t) for t in (s.tools or [])]
+                tool_names = s.allowed_tools or []
                 tools_str = f" 工具: {', '.join(tool_names)}" if tool_names else ""
                 desc = s.description or "无描述"
                 lines.append(f"- {s.name}\n  描述: {desc}{tools_str}")

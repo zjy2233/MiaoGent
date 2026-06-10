@@ -172,7 +172,7 @@ const api = {
 
   // ── IPC: 窗口控制 ──────────────────────────────────────────────────
   ballDragMove: (dx, dy) => ipcRenderer.send('ball-drag-move', dx, dy),
-  resizeBall: (w, h) => ipcRenderer.send('resize-ball', w, h),
+  panelDragMove: (dx, dy) => ipcRenderer.send('panel-drag-move', dx, dy),
   openPanel: (name) => ipcRenderer.send('open-panel', name),
   closePanel: () => ipcRenderer.send('close-panel'),
   toggleMaximize: () => ipcRenderer.send('toggle-maximize'),
@@ -206,6 +206,19 @@ const api = {
     fetch(`${BASE_URL}/api/traces/stats/cache`).then((r) => r.json()),
   getTracesBySession: (sessionId) =>
     fetch(`${BASE_URL}/api/traces/sessions/${sessionId}`).then((r) => r.json()),
+  getTraceCount: (q, status) => {
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    if (status) params.set('status', status);
+    const qs = params.toString();
+    return fetch(`${BASE_URL}/api/traces/count${qs ? '?' + qs : ''}`).then((r) => r.json()).then((r) => r.count);
+  },
+  getTokenTopTraces: (days, limit) => {
+    const params = new URLSearchParams();
+    if (days) params.set('days', days);
+    if (limit) params.set('limit', limit);
+    return fetch(`${BASE_URL}/api/traces/token-top?${params.toString()}`).then((r) => r.json());
+  },
 };
 
 contextBridge.exposeInMainWorld('api', api);
