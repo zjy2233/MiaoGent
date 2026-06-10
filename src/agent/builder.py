@@ -396,13 +396,31 @@ class MergedContextMiddleware(AgentMiddleware):
 
     @staticmethod
     def _is_anthropic(request) -> bool:
-        """检测当前模型是否为 Anthropic。"""
+        """检测当前模型是否为 Anthropic。
+
+        通过多层 fallback 提高检测可靠性：
+        1. request.model 是否为 ChatAnthropic 实例
+        2. 检查模型类名字符串含 "anthropic"
+        3. 检查 model_name 含 "claude"
+        """
         try:
             from langchain_anthropic import ChatAnthropic
+
             model = getattr(request, "model", None)
-            return isinstance(model, ChatAnthropic)
+            if model is not None:
+                if isinstance(model, ChatAnthropic):
+                    return True
+                # fallback: 检查 model_name
+                model_name = getattr(model, "model_name", "") or ""
+                if "claude" in model_name.lower():
+                    return True
+            # fallback: 检查类名
+            model_cls_name = type(model).__name__.lower() if model is not None else ""
+            if "anthropic" in model_cls_name:
+                return True
         except ImportError:
             return False
+        return False
 
 
 def build_agent(
@@ -496,16 +514,17 @@ def build_agent(
     if soul_description:
         system_prompt = f"你是一个{soul_description}的助手。\n\n{system_prompt}"
 
-    # ── ReWOO 路由中间件（条件启用）──
+    # ── ReWOO 路由中间件（条件启用，位于 MergedContextMiddleware 之后）──
     from src.agent.rewoo import ReWOORoutingMiddleware
-    from src.core.config import Settings
-    settings = Settings.from_env()
+    import os as _os
     rewoo_middleware = ReWOORoutingMiddleware(
-        llm, tools, enabled=settings.rewoo_enabled
+        llm, tools, enabled=_os.getenv("REWOO_ENABLED", "false").lower() == "true"
     )
 
-    # ── 中间件列表（ReWOO → MergedContext → Skill）──
-    middleware = [rewoo_middleware, merged_middleware]
+    # ── 中间件列表（MergedContext → ReWOO → Skill）──
+    # MergedContextMiddleware 先执行注入完整上下文，
+    # ReWOORoutingMiddleware 随后从注入的 SystemMessage 读取上下文决定是否走 ReWOO
+    middleware = [merged_middleware, rewoo_middleware]
     if _SKILL_AVAILABLE:
         skill_middleware = SkillContextMiddleware(registry=resolved_registry)
         middleware.append(skill_middleware)

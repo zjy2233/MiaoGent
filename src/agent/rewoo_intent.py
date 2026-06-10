@@ -81,21 +81,25 @@ def should_use_rewoo(user_message: str) -> bool:
     tool_estimate = estimate_tool_count(user_message)
 
     # 决策规则：
-    # 1. 明确的多步骤模式 + 工具估算 ≥ 2 → ReWOO
-    if pattern_matches >= 1 and tool_estimate >= 2:
+    # 1. 明确的多步骤模式 + 工具估算 ≥ 3 → ReWOO
+    if pattern_matches >= 1 and tool_estimate >= 3:
         return True
 
-    # 2. 工具估算 ≥ 5 → 高复杂度，ReWOO
+    # 2. 工具估算 ≥ 5 → 高复杂度，ReWOO（即使没有明确模式）
     if tool_estimate >= 5:
         return True
 
-    # 3. 工具估算 ≥ 3 且有多分隔符 → 多独立子任务，ReWOO
+    # 3. 简短查询不触发 ReWOO（如 "1. A 2. B" 列表，保留给 ReAct 处理）
+    if len(user_message) < 20:
+        return False
+
+    # 4. 工具估算 ≥ 4 且有多分隔符 → 多独立子任务，ReWOO
     separators = (
         user_message.count("，") + user_message.count(",") +
         user_message.count("、") + user_message.count("；")
     )
-    if tool_estimate >= 3 and separators >= 2:
+    if tool_estimate >= 4 and separators >= 2:
         return True
 
-    # 4. 其它 → ReAct
+    # 5. 其它 → ReAct
     return False
