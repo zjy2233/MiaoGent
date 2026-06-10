@@ -358,11 +358,12 @@ def build_agent(
     if soul_description:
         system_prompt = f"你是一个{soul_description}的助手。\n\n{system_prompt}"
 
-    # ── 中间件列表 ──
-    middleware = [TimeMiddleware(), SummaryMiddleware(), memory_middleware]
+    # ── 中间件列表（稳定在前、易变在后，最大化前缀缓存命中率）──
+    middleware = [SummaryMiddleware(), memory_middleware]
     if _SKILL_AVAILABLE:
         skill_middleware = SkillContextMiddleware(registry=resolved_registry)
         middleware.append(skill_middleware)
+    middleware.append(TimeMiddleware())
 
     # ── 创建 Agent ──
     agent = create_agent(
