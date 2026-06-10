@@ -270,6 +270,104 @@ class TimeMiddleware(AgentMiddleware):
         return await handler(request)
 
 
+class MergedContextMiddleware(AgentMiddleware):
+    """合并所有上下文注入为单一 SystemMessage，稳定内容在前、易变内容在后。
+
+    注入内容按稳定性分层（最大化前缀缓存命中）：
+    Layer 1 (最稳定): 对话历史摘要（只在 MemoryManager 压缩时变化）
+    Layer 2 (半稳定): 用户画像 + 结构化记忆（偶尔更新）
+    Layer 3 (半稳定): Skill 上下文（load_skill 时变化）
+    Layer 4 (易变): 当前时间（会话级冻结，每次新会话第一次调用时确定）
+    """
+
+    def __init__(
+        self,
+        profile_manager: "ProfileManager | None" = None,
+        profile: dict | None = None,
+        memory_store: "MemoryStore | None" = None,
+    ):
+        super().__init__()
+        self._profile_manager = profile_manager
+        self._init_profile = profile or {}
+        self._profile = profile or {}
+        self._memory_store = memory_store
+        self._session_time: str | None = None
+        # MemoryMiddleware 缓存（迁移自原 MemoryMiddleware）
+        self._cached_memory_text: str | None = None
+        self._cache_version: int = 0
+        self._last_build_version: int = -1
+
+    def invalidate_cache(self) -> None:
+        self._cache_version += 1
+
+    def update_profile(self, new_facts: dict | None = None) -> None:
+        if not self._profile_manager:
+            if new_facts:
+                self._profile.update(new_facts)
+            self.invalidate_cache()
+            return
+        if new_facts:
+            self._profile_manager.merge(new_facts)
+        self._profile = self._profile_manager.load()
+        self.invalidate_cache()
+
+    def _build_profile_text(self) -> str:
+        """构建用户画像文本（从原 ProfileMiddleware）。"""
+        if self._profile_manager:
+            self._profile = self._profile_manager.load()
+        profile_lines: list[str] = []
+        for key, value in self._profile.items():
+            if key == "version" or key.endswith("_source"):
+                continue
+            profile_lines.append(f"{key}: {value}")
+        if not profile_lines:
+            return ""
+        return "[用户画像]\n" + "\n".join(profile_lines)
+
+    def _build_memory_text(self) -> str:
+        """构建用户画像 + 结构化记忆合并文本（从原 MemoryMiddleware）。"""
+        if self._last_build_version < self._cache_version or self._cached_memory_text is None:
+            parts: list[str] = []
+            # 用户画像（手工设定）
+            profile_text = self._build_profile_text()
+            if profile_text:
+                parts.append(profile_text)
+            # 结构化记忆（自动提取）
+            if self._memory_store:
+                memory_text = self._memory_store.get_all_formatted()
+                if memory_text:
+                    parts.append("【自动学习】\n" + memory_text)
+            self._cached_memory_text = "\n\n".join(parts) if parts else ""
+            self._last_build_version = self._cache_version
+        return self._cached_memory_text
+
+    async def awrap_model_call(self, request, handler):
+        context_parts: list[str] = []
+
+        # Layer 1: 对话历史摘要
+        summary = request.state.get("summary", "") or ""
+        if summary:
+            context_parts.append(f"[对话历史摘要]\n{summary}")
+
+        # Layer 2: 用户画像 + 结构化记忆
+        memory_text = self._build_memory_text()
+        if memory_text:
+            context_parts.append(f"[关于用户]\n{memory_text}")
+
+        # Layer 3: Skill 上下文由 SkillContextMiddleware 独立注入（需访问 messages）
+        # Layer 4: 当前时间（会话级冻结）
+        if self._session_time is None:
+            self._session_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        context_parts.append(f"[当前时间]\n{self._session_time}")
+
+        if context_parts:
+            combined = "\n\n".join(context_parts)
+            request = request.override(
+                messages=[SystemMessage(content=combined), *request.messages]
+            )
+        return await handler(request)
+
+
 def build_agent(
     llm: BaseChatModel,
     *,
@@ -301,10 +399,13 @@ def build_agent(
     if profile is None:
         profile = _get_profile_manager().load()
 
-    profile_middleware = ProfileMiddleware(profile=profile, profile_manager=_get_profile_manager())
     if memory_store is None:
         memory_store = MemoryStore()
-    memory_middleware = MemoryMiddleware(store=memory_store, profile_manager=_get_profile_manager())
+    merged_middleware = MergedContextMiddleware(
+        profile_manager=_get_profile_manager(),
+        profile=profile,
+        memory_store=memory_store,
+    )
 
     # ── Skill 系统初始化（load_skill 工具） ──
     skill_middleware = None
@@ -358,12 +459,11 @@ def build_agent(
     if soul_description:
         system_prompt = f"你是一个{soul_description}的助手。\n\n{system_prompt}"
 
-    # ── 中间件列表（稳定在前、易变在后，最大化前缀缓存命中率）──
-    middleware = [SummaryMiddleware(), memory_middleware]
+    # ── 中间件列表（MergedContextMiddleware 合并了摘要/画像/记忆/时间注入）──
+    middleware = [merged_middleware]
     if _SKILL_AVAILABLE:
         skill_middleware = SkillContextMiddleware(registry=resolved_registry)
         middleware.append(skill_middleware)
-    middleware.append(TimeMiddleware())
 
     # ── 创建 Agent ──
     agent = create_agent(
@@ -378,8 +478,8 @@ def build_agent(
 
     return AgentBundle(
         agent=agent,
-        profile_middleware=profile_middleware,
-        memory_middleware=memory_middleware,
+        profile_middleware=merged_middleware,
+        memory_middleware=merged_middleware,
         memory_store=memory_store,
         skill_middleware=skill_middleware,
         skill_registry=resolved_registry,
