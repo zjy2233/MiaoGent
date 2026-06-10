@@ -460,6 +460,18 @@ class Api:
                         elif kind == "on_chat_model_end":
                             sid = run_id_to_span_id.pop(run_id, None)
                             if sid:
+                                resp = event.get("data", {}).get("output", {})
+                                if isinstance(resp, dict):
+                                    usage = resp.get("usage_metadata") or {}
+                                else:
+                                    usage = getattr(resp, "usage_metadata", {})
+                                if isinstance(usage, dict) and usage:
+                                    span = tracer._spans.get(sid)
+                                    if span:
+                                        span.input_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
+                                        span.output_tokens = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
+                                        span.cache_hit_tokens = usage.get("prompt_cache_hit_tokens", 0) or usage.get("cache_read_input_tokens", 0)
+                                        span.cache_miss_tokens = usage.get("prompt_cache_miss_tokens", 0) or usage.get("cache_creation_input_tokens", 0)
                                 tracer.end_span(sid)
                         elif kind == "on_chat_model_error":
                             sid = run_id_to_span_id.pop(run_id, None)
@@ -616,6 +628,8 @@ class Api:
                                 if span:
                                     span.input_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
                                     span.output_tokens = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
+                                    span.cache_hit_tokens = usage.get("prompt_cache_hit_tokens", 0) or usage.get("cache_read_input_tokens", 0)
+                                    span.cache_miss_tokens = usage.get("prompt_cache_miss_tokens", 0) or usage.get("cache_creation_input_tokens", 0)
                             tracer.end_span(sid)
                     elif kind == "on_chat_model_error":
                         sid = run_id_to_span_id.pop(run_id, None)

@@ -38,13 +38,18 @@ class TraceCallbackHandler(BaseCallbackHandler):
             self._tracer = Tracer(session_id=self.session_id, session_turn=self.session_turn)
         return self._tracer
 
-    def _extract_tokens(self, llm_output: dict | None) -> tuple[int, int]:
+    def _extract_tokens(self, llm_output: dict | None) -> dict[str, int]:
         if not llm_output:
-            return 0, 0
+            return {"input": 0, "output": 0, "cache_hit": 0, "cache_miss": 0}
         usage = llm_output.get("token_usage") or llm_output.get("usage") or {}
         if isinstance(usage, dict):
-            return usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)
-        return 0, 0
+            return {
+                "input": usage.get("prompt_tokens", 0),
+                "output": usage.get("completion_tokens", 0),
+                "cache_hit": usage.get("prompt_cache_hit_tokens", 0) or usage.get("cache_read_input_tokens", 0),
+                "cache_miss": usage.get("prompt_cache_miss_tokens", 0) or usage.get("cache_creation_input_tokens", 0),
+            }
+        return {"input": 0, "output": 0, "cache_hit": 0, "cache_miss": 0}
 
     # ── Chain (用于 session_turn + agent_step) ──
 
@@ -127,11 +132,13 @@ class TraceCallbackHandler(BaseCallbackHandler):
             return
         llm_output = getattr(response, "llm_output", None)
         if isinstance(llm_output, dict):
-            input_t, output_t = self._extract_tokens(llm_output)
+            tokens = self._extract_tokens(llm_output)
             span = tracer._spans.get(span_id)
             if span:
-                span.input_tokens = input_t
-                span.output_tokens = output_t
+                span.input_tokens = tokens["input"]
+                span.output_tokens = tokens["output"]
+                span.cache_hit_tokens = tokens["cache_hit"]
+                span.cache_miss_tokens = tokens["cache_miss"]
         tracer.end_span(span_id)
         span = tracer._spans.get(span_id)
         if span:
