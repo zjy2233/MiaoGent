@@ -460,8 +460,16 @@ def build_agent(
     if soul_description:
         system_prompt = f"你是一个{soul_description}的助手。\n\n{system_prompt}"
 
-    # ── 中间件列表（MergedContextMiddleware 合并了摘要/画像/记忆/时间注入）──
-    middleware = [merged_middleware]
+    # ── ReWOO 路由中间件（条件启用）──
+    from src.agent.rewoo import ReWOORoutingMiddleware
+    from src.core.config import Settings
+    settings = Settings.from_env()
+    rewoo_middleware = ReWOORoutingMiddleware(
+        llm, tools, enabled=settings.rewoo_enabled
+    )
+
+    # ── 中间件列表（ReWOO → MergedContext → Skill）──
+    middleware = [rewoo_middleware, merged_middleware]
     if _SKILL_AVAILABLE:
         skill_middleware = SkillContextMiddleware(registry=resolved_registry)
         middleware.append(skill_middleware)

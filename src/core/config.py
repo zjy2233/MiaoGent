@@ -50,6 +50,7 @@ class Settings:
     max_turns: int = 10
     max_message_chars: int = 12000
     compression_model: str = ""
+    rewoo_enabled: bool = False
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -79,4 +80,5 @@ class Settings:
             max_turns=_env_int("MAX_TURNS", 10),
             max_message_chars=_env_int("MAX_MESSAGE_CHARS", 12000),
             compression_model=os.getenv("COMPRESSION_MODEL", "").strip(),
+            rewoo_enabled=os.getenv("REWOO_ENABLED", "false").lower() == "true",
         )
