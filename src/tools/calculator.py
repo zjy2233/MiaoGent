@@ -13,6 +13,8 @@ from typing import Any
 
 from langchain_core.tools import tool
 
+__category__ = "computation"
+
 # AST 节点 → 实际可调用对象 的白名单映射
 _BIN_OPS: dict[type, Any] = {
     ast.Add: operator.add,
@@ -116,7 +118,7 @@ def safe_eval(expression: str) -> float:
 _TOOL_GUIDE = "所有数学计算必须调用 calculator，不要心算或用 shell（python -c）计算。"
 
 
-@tool
+@tool(description="执行数学计算。支持 +-*/、math 模块函数 (sqrt/log/sin 等)。")
 def calculator(expression: str) -> str:
     """执行数学计算并返回结果字符串。
 

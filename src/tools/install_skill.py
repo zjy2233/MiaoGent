@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+__category__ = "system"
+
 from langchain_core.tools import tool
 
 from src.core.miaogent_home import get_miaogent_home
@@ -170,7 +172,7 @@ def _name_from_url(url: str) -> str:
     return name or "downloaded_skill"
 
 
-@tool
+@tool(description="安装 Skill。支持 git: URL、npm:、pip: 前缀或自动检测来源。使用 list_registry 浏览可用 Skill。")
 def install_skill(skill_name: str, source: str = "") -> str:
     """安装 Skill 到本地。
 
@@ -328,7 +330,7 @@ def install_skill(skill_name: str, source: str = "") -> str:
     )
 
 
-@tool
+@tool(description="卸载已安装的第三方 Skill。内置 Skill 无法卸载。")
 def uninstall_skill(skill_name: str) -> str:
     """卸载一个已安装的 Skill。
 
@@ -367,7 +369,7 @@ def uninstall_skill(skill_name: str) -> str:
     return f"已卸载 Skill '{name}'。{info}"
 
 
-@tool
+@tool(description="列出所有可用 Skill（内置 + 已安装的第三方）。")
 def list_registry() -> str:
     """浏览可用的 Skill。
 

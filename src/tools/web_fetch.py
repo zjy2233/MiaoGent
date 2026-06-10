@@ -14,6 +14,8 @@ from typing import Any
 import requests
 from langchain_core.tools import tool
 
+__category__ = "web"
+
 _DEFAULT_TIMEOUT = 15
 _MAX_TEXT_CHARS = 5000
 _READ_BYTES = 512 * 1024  # 最多读取 512KB
@@ -135,7 +137,7 @@ def fetch_page(url: str, *, timeout: float = _DEFAULT_TIMEOUT) -> str:
     return text
 
 
-@tool
+@tool(description="获取网页正文纯文本。自动去标签去广告，大页面截断到 5000 字符。")
 async def web_fetch(url: str, timeout: int = _DEFAULT_TIMEOUT) -> str:
     """获取指定 URL 页面的正文内容。
 

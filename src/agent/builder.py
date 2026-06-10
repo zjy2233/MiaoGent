@@ -417,7 +417,7 @@ def build_agent(
         resolved_registry.discover()
 
         # load_skill 工具（闭包捕获 resolved_registry）
-        @_skill_tool
+        @_skill_tool(description="激活指定 Skill，使其指令在后续对话中可用。先用 list_skills 查看所有 Skill。")
         def load_skill(skill_name: str) -> str:
             """激活指定的 Skill，使其指令在后续对话中可用。先用 list_skills 查看所有 Skill。"""
             skill = resolved_registry.get(skill_name)

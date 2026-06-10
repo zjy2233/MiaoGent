@@ -13,6 +13,8 @@ from langchain_core.tools import tool
 from langgraph.types import interrupt
 
 from src.core.miaogent_home import get_temp_dir
+
+__category__ = "file_system"
 from src.tools.file_operations import _safe_path
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -21,7 +23,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _TOOL_GUIDE = "优先使用 write_file 而非 shell 重定向（>）写文件。生成临时脚本时务必设置 temp=True。"
 
 
-@tool
+@tool(description="写入文件。temp=True 时写入临时目录，覆盖已有文件需用户确认。")
 def write_file(path: str, content: str, temp: bool = False) -> str:
     """写入文件。新文件直接创建，覆盖已有文件需用户确认。
 

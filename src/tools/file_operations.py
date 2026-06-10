@@ -17,6 +17,8 @@ from pathlib import Path
 
 from langchain_core.tools import tool
 
+__category__ = "file_system"
+
 # ── 路径安全 ────────────────────────────────────────────────────
 
 # 项目根目录（src/tools/file_operations.py → 上三层到项目根）
@@ -81,7 +83,7 @@ def _safe_path(path: str | Path) -> Path:
 _TOOL_GUIDE = "优先使用专用工具而非 shell：list_files 代替 dir/ls，read_file 代替 cat/type，grep_search 代替 grep/findstr，create_folder 代替 mkdir。"
 
 
-@tool
+@tool(description="列出目录内容。支持 glob 过滤。替代 dir/ls。")
 def list_files(path: str = ".", pattern: str | None = None) -> str:
     """列出指定目录的文件和子目录。
 
@@ -154,7 +156,7 @@ def list_files(path: str = ".", pattern: str | None = None) -> str:
     return "\n".join(lines)
 
 
-@tool
+@tool(description="读取文本文件内容。支持行范围、自动编码检测（UTF-8/GBK）。")
 def read_file(path: str, offset: int = 0, limit: int = 200) -> str:
     """读取文本文件内容，支持行范围。
 
@@ -225,7 +227,7 @@ def read_file(path: str, offset: int = 0, limit: int = 200) -> str:
     return "\n".join(result)
 
 
-@tool
+@tool(description="在文件中搜索正则表达式模式。支持 glob 过滤，最多 50 结果。")
 def grep_search(pattern: str, path: str = ".", include: str | None = None) -> str:
     """在文件中搜索文本模式（纯 Python 实现，无需 grep 命令）。
 
@@ -337,7 +339,7 @@ def grep_search(pattern: str, path: str = ".", include: str | None = None) -> st
     return summary
 
 
-@tool
+@tool(description="创建文件夹。支持多级目录，已存在时不报错。")
 def create_folder(path: str) -> str:
     """创建文件夹（目录）。支持创建多级目录，已存在时不会报错。
 

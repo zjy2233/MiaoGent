@@ -16,6 +16,8 @@ from typing import Any
 
 from langchain_core.tools import tool
 
+__category__ = "agent"
+
 from src.agent.sub_agent import REGULAR_TOOLS, run_sub_agent
 
 _recursion_depth: int = 0
@@ -39,7 +41,7 @@ def build_delegate_task(
         装饰了 ``@tool`` 的 async 函数，可直接加入 agent 工具列表。
     """
 
-    @tool
+    @tool(description="将子任务委托给隔离的 sub-agent 执行。Sub-agent 有独立上下文和常规工具集，但无法再次委托。")
     async def delegate_task(task: str, timeout: int = 60) -> str:
         """将子任务委托给一个隔离的 sub-agent 独立执行。
 

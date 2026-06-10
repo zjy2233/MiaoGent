@@ -12,6 +12,8 @@ from __future__ import annotations
 from langchain_core.tools import tool
 from langgraph.types import interrupt
 
+__category__ = "code_execution"
+
 from src.tools.shell.danger import check_danger
 from src.tools.shell.executor import SandboxExecutor, _get_timeout
 from src.store.audit import AuditLogger
@@ -30,7 +32,7 @@ _TOOL_GUIDE = (
 )
 
 
-@tool
+@tool(description="执行 shell 命令。Windows cmd.exe 环境。高危命令自动拦截，需确认命令暂停等待批准。")
 async def shell(command: str, timeout: int | None = None) -> str:
     """执行 shell 命令并返回 stdout/stderr 输出。
 

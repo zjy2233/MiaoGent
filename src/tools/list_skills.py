@@ -10,6 +10,8 @@ from typing import Any
 
 from langchain_core.tools import tool
 
+__category__ = "system"
+
 
 def build_list_skills_tool(
     *,
@@ -24,7 +26,7 @@ def build_list_skills_tool(
         装饰了 ``@tool`` 的函数，可直接加入 agent 工具列表。
     """
 
-    @tool
+    @tool(description="列出所有可用 Skill 名称、描述和工具列表。用 load_skill 激活需要的 Skill。")
     def list_skills() -> str:
         """列出所有可用的 Skill 及其描述。
 

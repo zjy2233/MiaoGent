@@ -11,6 +11,8 @@ import time
 
 from langchain_core.tools import tool
 
+__category__ = "code_execution"
+
 from src.tools.shell.executor import ShellResult, _get_system_encoding, _truncate_output_simple, IS_WINDOWS
 
 MAX_OUTPUT_CHARS = 10_000
@@ -19,7 +21,7 @@ MAX_OUTPUT_CHARS = 10_000
 _TOOL_GUIDE = "执行 Python 代码时优先使用 run_python，而非 shell 的 python -c。"
 
 
-@tool
+@tool(description="在隔离子进程中执行 Python 代码。仅标准库，禁止文件操作。")
 async def run_python(code: str, timeout: int = 30) -> str:
     """在隔离的 Python 子进程中运行代码并返回输出。
 

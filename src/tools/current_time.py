@@ -10,6 +10,8 @@ from datetime import datetime, timezone
 
 from langchain_core.tools import tool
 
+__category__ = "computation"
+
 
 def _now_string() -> str:
     """拼出 agent 友好的时间字符串。"""
@@ -24,7 +26,7 @@ def _now_string() -> str:
 _TOOL_GUIDE = "用户问当前时间时必须使用 current_time 获取实际时间，不要凭印象回答。"
 
 
-@tool
+@tool(description="查看当前本地时间和 UTC 时间。")
 def current_time() -> str:
     """查看当前时间。
 

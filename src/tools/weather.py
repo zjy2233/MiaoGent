@@ -11,6 +11,8 @@ import urllib.parse
 import requests
 from langchain_core.tools import tool
 
+__category__ = "web"
+
 WTTR_BASE_URL = "https://wttr.in"
 DEFAULT_TIMEOUT = 10  # seconds
 
@@ -58,7 +60,7 @@ def fetch_weather(location: str, *, timeout: float = DEFAULT_TIMEOUT) -> str:
     return _summarize(payload, location)
 
 
-@tool
+@tool(description="查询指定城市当前天气：温度、体感温度、湿度、风速。仅当前观测，无法预报。")
 def weather(location: str) -> str:
     """查询指定城市的当前天气。
 

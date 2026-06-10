@@ -16,6 +16,8 @@ from typing import Any
 
 from langchain_core.tools import tool
 
+__category__ = "web"
+
 from src.tools.hot_search import fetch_hot_search
 from src.tools.search.adapter import _format_results
 from src.tools.search.bing import BingAdapter
@@ -44,7 +46,7 @@ _TOOL_GUIDE = (
 )
 
 
-@tool
+@tool(description="联网搜索。多引擎自动 fallback，支持复杂查询渐进式搜索。topic='news' 抓取百度热搜。")
 async def search(query: str, topic: str = "text") -> str:
     """联网搜索关键词或查询百度热搜榜。
 
