@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS spans (
     model TEXT DEFAULT '',
     input_tokens INTEGER DEFAULT 0,
     output_tokens INTEGER DEFAULT 0,
+    cache_hit_tokens INTEGER DEFAULT 0,
+    cache_miss_tokens INTEGER DEFAULT 0,
     tool_name TEXT DEFAULT '',
     tool_input TEXT DEFAULT '',
     status TEXT NOT NULL DEFAULT 'ok',
@@ -61,6 +63,15 @@ class TraceStore:
                 conn.execute(INDEX_TRACE_SQL)
                 conn.execute(INDEX_SESSION_SQL)
                 conn.execute(INDEX_STARTED_SQL)
+                # 数据库迁移：为已有数据库添加 cache 列
+                for col in ("cache_hit_tokens", "cache_miss_tokens"):
+                    try:
+                        conn.execute(
+                            f"ALTER TABLE spans ADD COLUMN {col} INTEGER DEFAULT 0"
+                        )
+                    except sqlite3.OperationalError as e:
+                        if "duplicate column" not in str(e).lower():
+                            raise
                 conn.commit()
             finally:
                 conn.close()
@@ -72,7 +83,8 @@ class TraceStore:
     def write_span(self, span: SpanData) -> None:
         cols = [
             "span_id", "parent_span_id", "trace_id", "session_id", "session_turn",
-            "span_type", "model", "input_tokens", "output_tokens", "tool_name",
+            "span_type", "model", "input_tokens", "output_tokens",
+            "cache_hit_tokens", "cache_miss_tokens", "tool_name",
             "tool_input", "status", "error_message", "started_at", "ended_at",
             "duration_ms", "user_message",
         ]
@@ -94,7 +106,8 @@ class TraceStore:
             try:
                 cols = [
                     "span_id", "parent_span_id", "trace_id", "session_id", "session_turn",
-                    "span_type", "model", "input_tokens", "output_tokens", "tool_name",
+                    "span_type", "model", "input_tokens", "output_tokens",
+                    "cache_hit_tokens", "cache_miss_tokens", "tool_name",
                     "tool_input", "status", "error_message", "started_at", "ended_at",
                     "duration_ms", "user_message",
                 ]
@@ -175,7 +188,8 @@ class TraceStore:
                 ).fetchone()
                 # token sums from ALL spans today (token data lives on llm_call spans)
                 row_t = conn.execute(
-                    "SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0) "
+                    "SELECT COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0), "
+                    "COALESCE(SUM(cache_hit_tokens), 0), COALESCE(SUM(cache_miss_tokens), 0) "
                     "FROM spans WHERE started_at >= ?",
                     (today,),
                 ).fetchone()
@@ -189,6 +203,8 @@ class TraceStore:
                     "total_traces": row[0],
                     "total_input_tokens": row_t[0],
                     "total_output_tokens": row_t[1],
+                    "total_cache_hit_tokens": row_t[2],
+                    "total_cache_miss_tokens": row_t[3],
                     "total_tokens": row_t[0] + row_t[1],
                     "avg_duration_ms": round(row[1], 1),
                     "error_count": row[2],
