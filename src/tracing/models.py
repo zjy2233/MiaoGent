@@ -26,6 +26,8 @@ class SpanData:
     model: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
+    cache_hit_tokens: int = 0
+    cache_miss_tokens: int = 0
     tool_name: str = ""
     tool_input: str = ""
     status: str = "ok"  # ok | error
@@ -54,6 +56,8 @@ class SpanData:
             "model": self.model,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,
+            "cache_hit_tokens": self.cache_hit_tokens,
+            "cache_miss_tokens": self.cache_miss_tokens,
             "tool_name": self.tool_name,
             "tool_input": self.tool_input,
             "status": self.status,
