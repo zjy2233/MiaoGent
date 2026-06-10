@@ -138,7 +138,7 @@ class AgentState(TypedDict):
 
 
 class SummaryMiddleware(AgentMiddleware):
-    """在 LLM 调用前把 state.summary 注入为消息列表头部的 SystemMessage。"""
+    """(Deprecated: use MergedContextMiddleware) 在 LLM 调用前把 state.summary 注入为消息列表头部的 SystemMessage。"""
 
     async def awrap_model_call(self, request, handler):
         summary = request.state.get("summary", "") or ""
@@ -151,7 +151,7 @@ class SummaryMiddleware(AgentMiddleware):
 
 
 class ProfileMiddleware(AgentMiddleware):
-    """在 LLM 调用前把用户画像注入为消息列表头部的 SystemMessage。
+    """(Deprecated: use MergedContextMiddleware) 在 LLM 调用前把用户画像注入为消息列表头部的 SystemMessage。
 
     如果传入了 ``profile_manager``，每次 LLM 调用前从磁盘重新加载，
     确保用户通过设置面板手动修改的 ``profile.json`` 实时生效；
@@ -194,7 +194,7 @@ class ProfileMiddleware(AgentMiddleware):
 
 
 class MemoryMiddleware(AgentMiddleware):
-    """在 LLM 调用前把用户画像 + 结构化记忆合并注入为一条 SystemMessage。
+    """(Deprecated: use MergedContextMiddleware) 在 LLM 调用前把用户画像 + 结构化记忆合并注入为一条 SystemMessage。
 
     画像（手工设定）标记为【用户设定】，记忆（自动提取）标记为【自动学习】，
     合并为 ``[关于用户]`` 一个块，避免两条 SystemMessage 内容重复。
@@ -254,7 +254,7 @@ class MemoryMiddleware(AgentMiddleware):
 
 
 class TimeMiddleware(AgentMiddleware):
-    """在每次 LLM 调用前注入当前日期时间（会话级冻结，避免破坏前缀缓存）。"""
+    """(Deprecated: use MergedContextMiddleware) 在每次 LLM 调用前注入当前日期时间（会话级冻结，避免破坏前缀缓存）。"""
 
     def __init__(self):
         super().__init__()
