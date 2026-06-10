@@ -231,63 +231,76 @@ safeHandler('open-panel', (_event, name) => {
 });
 safeHandler('close-panel', () => { if (panelWindow) panelWindow.hide(); });
 
-// 双击标题栏切换最大化/还原
-// 策略：纯色遮罩覆盖内容 → resize → 遮罩淡出。
-// 用实色 div 代替 opacity/filter，避免 GPU 合成层在 resize 时产生黑闪。
+// 双击标题栏切换最大化/还原 — 截图定格方案
+// resize 前截图 → 用截图覆盖窗口 → 干净 resize → 截图淡出揭示新内容。
+// 截图是静态 <img>，不依赖 GPU 合成层，不会触发黑闪。
 safeHandler('toggle-maximize', async () => {
   if (!panelWindow) return;
 
-  if (panelPreMaxBounds) {
-    // ── 还原 ──
+  // ── 截图 + 放入遮罩层 ──
+  async function freezeFrame() {
+    try {
+      const image = await panelWindow.webContents.capturePage();
+      const dataUrl = image.toDataURL();
+      await panelWindow.webContents.executeJavaScript(`
+        (() => {
+          const img = document.createElement('img');
+          img.id = '_freeze-frame';
+          img.src = ${JSON.stringify(dataUrl)};
+          img.style.cssText = 'position:fixed;inset:0;z-index:99999;width:100%;height:100%;object-fit:fill;pointer-events:none;image-rendering:auto;';
+          document.body.appendChild(img);
+        })();
+      `);
+    } catch (err) {
+      // 截图失败时 fallback：瞬时隐藏 body 内容
+      logError('freezeFrame', err);
+      await panelWindow.webContents.executeJavaScript(`
+        document.body.style.opacity = '0';
+        document.body.style.transition = 'none';
+      `);
+    }
+  }
+
+  // ── 移除遮罩层（淡出动画） ──
+  async function unfreezeFrame() {
     await panelWindow.webContents.executeJavaScript(`
       (() => {
-        const c = document.createElement('div');
-        c.id = '_resize-curtain';
-        c.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#1e1e32';
-        document.body.appendChild(c);
+        const el = document.getElementById('_freeze-frame');
+        if (el) {
+          el.style.transition = 'opacity 0.55s cubic-bezier(0.22,0.61,0.36,1)';
+          el.style.opacity = '0';
+          setTimeout(() => el.remove(), 600);
+        } else {
+          document.body.style.transition = 'opacity 0.35s ease-out';
+          document.body.style.opacity = '1';
+        }
       })();
-      new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
     `);
+  }
+
+  if (panelPreMaxBounds) {
+    // ── 还原（全屏 → 小窗） ──
+    await freezeFrame();
     panelWindow.setBounds(panelPreMaxBounds);
     panelPreMaxBounds = null;
-    await new Promise(r => setTimeout(r, 120));
-    await panelWindow.webContents.executeJavaScript(`
-      (() => {
-        const c = document.getElementById('_resize-curtain');
-        if (!c) return;
-        c.style.transition = 'opacity 0.3s ease-out';
-        c.style.opacity = '0';
-        setTimeout(() => c.remove(), 320);
-      })();
-    `);
+    // 等渲染器完成小窗尺寸重绘
+    await new Promise(r => setTimeout(r, 200));
+    await unfreezeFrame();
+
   } else {
-    // ── 最大化 ──
+    // ── 最大化（小窗 → 全屏） ──
     const display = screen.getPrimaryDisplay();
     if (!display) return;
     const b = panelWindow.getBounds();
     panelPreMaxBounds = { x: b.x, y: b.y, width: b.width, height: b.height };
     const { x, y, width, height } = display.workArea;
 
-    await panelWindow.webContents.executeJavaScript(`
-      (() => {
-        const c = document.createElement('div');
-        c.id = '_resize-curtain';
-        c.style.cssText = 'position:fixed;inset:0;z-index:99999;background:#1e1e32';
-        document.body.appendChild(c);
-      })();
-      new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
-    `);
+    await freezeFrame();
+    // 单次干净 resize，不步进
     panelWindow.setBounds({ x, y, width, height });
-    await new Promise(r => setTimeout(r, 150));
-    await panelWindow.webContents.executeJavaScript(`
-      (() => {
-        const c = document.getElementById('_resize-curtain');
-        if (!c) return;
-        c.style.transition = 'opacity 0.3s ease-out';
-        c.style.opacity = '0';
-        setTimeout(() => c.remove(), 320);
-      })();
-    `);
+    // 给渲染器足够时间完成新尺寸的首帧绘制
+    await new Promise(r => setTimeout(r, 250));
+    await unfreezeFrame();
   }
 });
 

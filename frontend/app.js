@@ -1226,12 +1226,12 @@ async function loadOverview() {
       <div class="monitoring-stat-grid">
         <div class="monitoring-stat-box">
           <div class="monitoring-stat-label">今日 Token</div>
-          <div class="monitoring-stat-value">${(stats.total_tokens || 0) >= 1000 ? (stats.total_tokens / 1000).toFixed(1) + 'K' : stats.total_tokens || 0}</div>
+          <div class="monitoring-stat-value">${formatTokens(stats.total_tokens || 0)}</div>
           <div style="font-size:11px;color:${yesterdayClass};margin-top:2px;">${yesterdayText}</div>
         </div>
         <div class="monitoring-stat-box">
           <div class="monitoring-stat-label">平均延迟</div>
-          <div class="monitoring-stat-value">${(stats.avg_duration_ms / 1000 || 0).toFixed(1)}s</div>
+          <div class="monitoring-stat-value">${formatDuration(stats.avg_duration_ms || 0)}</div>
         </div>
         <div class="monitoring-stat-box">
           <div class="monitoring-stat-label">今日调用</div>
@@ -1268,8 +1268,8 @@ async function loadOverview() {
           <div class="monitoring-trace-row" onclick="showTraceDetail('${t.trace_id}')">
             <span style="width:8px;height:8px;border-radius:50%;background:${t.status === 'error' ? '#f87171' : '#4ade80'};flex-shrink:0;"></span>
             <span class="mono" style="font-size:11px;color:#aaa;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${t.user_message || t.trace_id.slice(0, 8)}</span>
-            <span style="font-size:11px;color:#aaa;">${((t.input_tokens || 0) + (t.output_tokens || 0)) >= 1000 ? (((t.input_tokens || 0) + (t.output_tokens || 0)) / 1000).toFixed(1) + 'K' : (t.input_tokens || 0) + (t.output_tokens || 0)}</span>
-            <span style="font-size:11px;color:#888;">${(t.duration_ms / 1000 || 0).toFixed(1)}s</span>
+            <span style="font-size:11px;color:#aaa;">${formatTokens((t.input_tokens || 0) + (t.output_tokens || 0))}</span>
+            <span style="font-size:11px;color:#888;">${formatDuration(t.duration_ms || 0)}</span>
             <span class="monitoring-badge ${t.status === 'error' ? 'error' : 'success'}">${t.status === 'error' ? '失败' : '完成'}</span>
           </div>
         `).join('');
@@ -1309,7 +1309,7 @@ async function loadTraces() {
           <option value="duration" ${traceState.sortField === 'duration' ? 'selected' : ''}>延迟</option>
         </select>
         <button class="monitoring-page-btn" id="trace-sort-dir" title="${traceState.sortDir === 'desc' ? '降序' : '升序'}">
-          ${traceState.sortDir === 'desc' ? '↓ 降序' : '↑ 升序'}
+          ${traceState.sortDir === 'desc' ? '▼ 降序' : '▲ 升序'}
         </button>
       </div>
       <div id="trace-list"></div>
@@ -1853,6 +1853,20 @@ function debounce(fn, delay) {
     clearTimeout(timer);
     timer = setTimeout(() => fn.apply(this, args), delay);
   };
+}
+
+// ── Helper: format duration (ms if < 1000, s otherwise) ──
+function formatDuration(ms) {
+  if (ms == null || ms === 0) return '0ms';
+  if (ms < 1000) return Math.round(ms) + 'ms';
+  return (ms / 1000).toFixed(1) + 's';
+}
+
+// ── Helper: format token count ──
+function formatTokens(n) {
+  if (n == null || n === 0) return '0';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+  return String(n);
 }
 
 
