@@ -49,17 +49,8 @@ def get_temp_dir() -> Path:
 
 
 def get_data_path(name: str) -> Path:
-    """返回 ``~/.miaogent/<name>``，兼容旧的 ``data/<name>``。
-
-    当 ``~/.miaogent/<name>`` 不存在但 ``data/<name>`` 存在时，
-    优先返回旧的 ``data/<name>`` 路径以实现平滑迁移。
-    """
-    p = get_miaogent_home() / name
-    if not p.exists():
-        legacy = Path("data") / name
-        if legacy.exists():
-            return legacy
-    return p
+    """返回 ``~/.miaogent/<name>`` 路径。"""
+    return get_miaogent_home() / name
 
 
 def cleanup_temp_dir() -> None:
