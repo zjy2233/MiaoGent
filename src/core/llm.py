@@ -30,6 +30,7 @@ def build_llm(settings: Settings | None = None, *, temperature: float = 0.0) -> 
             timeout=cfg.request_timeout,
             max_retries=2,
             streaming=True,
+            model_kwargs={"parallel_tool_calls": True},
         )
 
     # OpenAI 兼容分支（deepseek / openai / 其他）
@@ -48,4 +49,5 @@ def build_llm(settings: Settings | None = None, *, temperature: float = 0.0) -> 
         timeout=cfg.request_timeout,
         max_retries=2,
         streaming=True,
+        model_kwargs={"parallel_tool_calls": True},
     )
