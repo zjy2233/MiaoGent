@@ -28,7 +28,7 @@ src/
 ├── core/                 # 核心配置
 │   ├── __init__.py
 │   ├── config.py         # Settings dataclass，从 .env 加载
-│   ├── llm.py            # DeepSeek LLM 工厂（ChatOpenAI）
+│   ├── llm.py            # LLM 工厂：支持 deepseek/openai/anthropic，CacheAwareChatOpenAI 子类保留 streaming 缓存字段
 │   ├── miaogent_home.py  # ~/.miaogent/ 路径工具 + get_temp_dir + cleanup_temp_dir
 │   ├── known_skills.json # 内置已知 Skill 索引
 │   └── skills_index.py   # Skill 来源索引（builtin/npm/pip/url）
@@ -38,17 +38,19 @@ src/
 │   ├── tracer.py         # Tracer：span 生命周期管理（start_span/end_span，嵌套栈）
 │   ├── handler.py        # TraceCallbackHandler：LangChain BaseCallbackHandler，零侵入采集
 │   ├── store.py          # TraceStore：SQLite 持久化 + 统计查询
+│   ├── context.py        # TraceContext：跨 span 上下文传播（delegate_task 中切换 trace）
 │   └── api.py            # TracingAPI：供 bridge.py 调用的 trace 查询接口
 ├── agent/                # Agent 构造
 │   ├── __init__.py
 │   ├── builder.py        # LangGraph agent 构建 + SummaryMiddleware + ProfileMiddleware
 │   ├── supervisor.py     # Supervisor Graph：意图识别→规划→sub-agent 派发→汇总
-│   ├── sub_agent.py      # Sub-agent 工厂（隔离 MemorySaver + 受限工具集）
+│   ├── sub_agent.py      # Sub-agent 工厂（隔离 MemorySaver + 受限工具集，含 delegate_task 支持）
 │   └── memory.py         # MemoryManager：消息压缩与增量摘要
 ├── store/                # 数据持久化
 │   ├── __init__.py
 │   ├── sessions.py       # SessionRegistry：轻量级 JSON 注册表
 │   ├── soul.py           # SoulManager + ProfileManager
+│   ├── knowledge.py      # KnowledgeManager：知识库持久化存储
 │   └── audit.py          # AuditLogger：危险命令审计
 └── tools/                # LangChain @tool 工具集
     ├── __init__.py       # 导出所有工具
@@ -105,7 +107,14 @@ frontend/                 # HTTP API 桥接层（唯一入口）
 data/                     # 旧版数据目录（仍兼容）
 
 scripts/                  # 辅助工具脚本
-└── clean_agent_temp.py   # 清理 Agent 临时文件
+├── clean_agent_temp.py   # 清理 Agent 临时文件
+├── pipeline.py           # ComfyUI → Lottie 动画生成流水线
+├── build_comfyui_workflows.py  # 批量构建 ComfyUI 工作流
+├── pack_lottie.py        # 帧序列打包为 Lottie JSON
+├── extract_frames.py     # 从视频提取帧
+├── process_frames.py     # 帧后处理（去背景/缩放）
+├── setup_comfyui.py      # ComfyUI 环境配置
+└── comfyui_workflows/    # 预定义工作流 JSON（mascot_idle/jump/wave 等）
 ```
 
 ## 架构概览
@@ -113,15 +122,16 @@ scripts/                  # 辅助工具脚本
 ### 核心模块
 
 - **`frontend/http_server.py`** — 唯一入口：启动 aiohttp HTTP 服务器，提供 REST API 给前端（Electron/浏览器），使用 `AsyncSqliteSaver` 做持久化；退出时自动清理临时文件
-- **`frontend/bridge.py`** — `Api` 类封装所有后端能力：会话管理、设置读写、Soul/Profile、工具枚举、聊天（流式 + 非流式）、TracingAPI
-- **`src/agent/builder.py`** — 提供 `build_agent()`（单 agent）和 `build_supervisor_agent()`（多 agent 编排）两个入口
+- **`src/core/llm.py`** — LLM 工厂：支持 `deepseek` / `openai` / `anthropic` 三种 provider 自动切换，`CacheAwareChatOpenAI` 子类保留 streaming 模式下 DeepSeek 的 `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens` 字段
+- **`src/agent/builder.py`** — 提供 `build_agent()`（单 agent）、`build_rewire_agent()`（ReWOO 模式）和 `build_supervisor_agent()`（多 agent 编排）三个入口
 - **`src/agent/supervisor.py`** — Supervisor Graph：`intent_router` → `planner` → `step_dispatcher` → `aggregator`；意图识别分流简单/复杂任务
 - **`src/agent/sub_agent.py`** — Sub-agent 工厂：用 `create_agent` + 独立 `MemorySaver` 创建隔离执行单元，`REGULAR_TOOLS` 不含委派能力防止递归
 - **`src/core/config.py`** — 从 `.env` 加载配置（API key、base_url、max_turns、max_message_chars 等）
 - **`src/core/miaogent_home.py`** — `~/.miaogent/` 目录管理，自动创建目录结构，提供 `get_temp_dir()` / `cleanup_temp_dir()`，兼容旧 `data/` 路径
 - **`src/agent/memory.py`** — `MemoryManager`：消息压缩与增量摘要，避免 context 溢出；含 `_drop_orphans`（清理不完整的 tool_calls/响应对）和 `_split_by_turns`（按完整 turn 切分消息）
-- **`src/store/sessions.py`** — `SessionRegistry`：轻量级 JSON 注册表，管理 `~/.miaogent/.sessions.json` 中的历史 thread_id
-- **`src/tracing/`** — 链路追踪系统：`Tracer` 管理 span 嵌套栈，`TraceCallbackHandler` 零侵入采集 LangChain 事件，`TraceStore` SQLite 持久化，`TracingAPI` 查询接口
+- **`src/store/sessions.py`** — `SessionRegistry`：轻量级 JSON 注册表，管理 `~/.miaogent/.sessions.json` 中的历史 thread_id，支持批量删除
+- **`src/store/knowledge.py`** — `KnowledgeManager`：知识库持久化存储，支持增删查改
+- **`src/tracing/`** — 链路追踪系统：`Tracer` 管理 span 嵌套栈，`TraceCallbackHandler` 零侵入采集 LangChain 事件，`TraceStore` SQLite 持久化，`TracingAPI` 查询接口；支持 `delegate_task` 类型 span 和 `TraceContext` 跨 span 上下文传播
 - **`src/skills/registry.py`** — `SkillRegistry`：扫描 `src/skills/`（内置）+ `~/.miaogent/skills/`（用户安装），加载工具和提示注入
 - **`src/core/skills_index.py`** — Skill 来源索引：读取 `known_skills.json`，支持 builtin/npm/pip/url 四种安装方式
 - **`src/tools/install_skill.py`** — `install_skill` / `uninstall_skill` / `list_registry` 工具，支持多种来源自动检测安装 Skill
@@ -169,6 +179,16 @@ src/skills/weather/
 - `GET /api/traces/{trace_id}` — trace 详情（树形结构）
 - `GET /api/traces/{trace_id}/spans` — 原始 span 列表
 - `GET /api/traces/sessions/{session_id}` — 按会话查询
+
+### ReWOO 计划-执行模式（`src/agent/builder.py`）
+
+ReWOO（Reason Without Observation）将复杂任务拆分为"计划 → 批量执行 → 汇总"三阶段：
+
+1. **`planner`** — LLM 分析用户问题，输出包含依赖关系的步骤列表
+2. **`worker`** — 按步骤生成批量工具调用（含 delegate_task 委派 sub-agent），一次性并行执行
+3. **`solver`** — 汇总所有执行结果，生成最终回复
+
+相比 Supervisor 模式的优势：工具调用结果不反馈回 LLM，大幅降低 token 消耗。
 
 ### 多 Agent Supervisor 模式（`src/agent/supervisor.py` + `sub_agent.py`）
 
