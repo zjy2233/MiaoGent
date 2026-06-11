@@ -910,6 +910,7 @@ async function sendChatMessage() {
 
   // 显示用户消息
   addMessageBubble('human', text);
+  const humanBubble = document.getElementById('chat-messages').lastElementChild;
   scrollChatToBottom();
 
   // 猫猫进入思考状态
@@ -938,6 +939,20 @@ async function sendChatMessage() {
     pendingInterrupt = null;
     // 猫猫回到待机
     if (window.mascotController) window.mascotController.onIdle();
+    // 异步获取刚发送消息的 ID，用于后续编辑
+    _fetchHumanMsgId(humanBubble);
+  }
+
+  async function _fetchHumanMsgId(bubble) {
+    try {
+      const result = await window.api.getMessages(chatThreadId, { include_tool_calls: false, limit: 1 });
+      const msgs = result.messages || result;
+      if (msgs && msgs.length > 0 && msgs[0].role === 'human') {
+        bubble.dataset.msgId = msgs[0].id;
+        bubble._rawText = text;
+        _addEditButton(bubble);
+      }
+    } catch (_) { /* non-critical */ }
   }
 
   // 监听 preload 推送的 SSE 事件（自动清理）
@@ -1147,10 +1162,108 @@ function addMessageBubble(role, content, msgId) {
   if (msgId) div.dataset.msgId = msgId;
   if (role === 'ai' || role === 'assistant') {
     div.innerHTML = renderMarkdown(content);
+    div._rawMarkdown = content;
   } else {
     div.textContent = content;
+    div._rawText = content;
+    // human 消息悬浮编辑按钮（仅已有 ID 的消息）
+    if (msgId) _addEditButton(div);
   }
   container.appendChild(div);
+}
+
+function _addEditButton(bubble) {
+  const btn = document.createElement('button');
+  btn.className = 'msg-edit-btn';
+  btn.title = '编辑消息';
+  btn.textContent = '\u270E'; // pencil
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _enterEditMode(bubble);
+  });
+  bubble.appendChild(btn);
+}
+
+function _enterEditMode(bubble) {
+  const msgId = bubble.dataset.msgId;
+  const originalText = bubble._rawText || bubble.textContent || '';
+  bubble.classList.add('editing');
+
+  // 替换为编辑区
+  const textarea = document.createElement('textarea');
+  textarea.className = 'msg-edit-textarea';
+  textarea.value = originalText;
+  textarea.rows = Math.min(6, originalText.split('\n').length || 1);
+  // 编辑按钮和取消/确认
+  const actions = document.createElement('div');
+  actions.className = 'msg-edit-actions';
+  const confirmBtn = document.createElement('button');
+  confirmBtn.className = 'msg-edit-confirm';
+  confirmBtn.textContent = '确认重发';
+  confirmBtn.disabled = true;
+  const cancelBtn = document.createElement('button');
+  cancelBtn.className = 'msg-edit-cancel';
+  cancelBtn.textContent = '取消';
+
+  bubble.innerHTML = '';
+  bubble.appendChild(textarea);
+  actions.appendChild(confirmBtn);
+  actions.appendChild(cancelBtn);
+  bubble.appendChild(actions);
+  textarea.focus();
+
+  textarea.addEventListener('input', () => {
+    confirmBtn.disabled = !textarea.value.trim() || textarea.value === originalText;
+  });
+  confirmBtn.disabled = true;
+
+  const doCancel = () => {
+    bubble.classList.remove('editing');
+    bubble.innerHTML = '';
+    bubble.textContent = originalText;
+    bubble._rawText = originalText;
+    if (msgId) _addEditButton(bubble);
+  };
+
+  cancelBtn.addEventListener('click', doCancel);
+
+  textarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { e.preventDefault(); doCancel(); }
+  });
+
+  confirmBtn.addEventListener('click', async () => {
+    const newText = textarea.value.trim();
+    if (!newText || newText === originalText) return;
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = '发送中...';
+
+    try {
+      if (msgId && window.api.editMessage) {
+        await window.api.editMessage(chatThreadId, msgId, newText);
+      }
+      // 移除当前气泡及之后的所有消息
+      _removeMessagesFrom(bubble);
+      // 发送新消息
+      const input = document.getElementById('chat-input');
+      input.value = newText;
+      sendChatMessage();
+    } catch (e) {
+      confirmBtn.textContent = '失败，重试';
+      confirmBtn.disabled = false;
+      console.error('Edit message failed', e);
+    }
+  });
+}
+
+function _removeMessagesFrom(bubble) {
+  const container = document.getElementById('chat-messages');
+  let el = bubble.nextSibling;
+  while (el) {
+    const next = el.nextSibling;
+    el.remove();
+    el = next;
+  }
+  bubble.remove();
 }
 
 function scrollChatToBottom() {

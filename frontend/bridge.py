@@ -443,6 +443,35 @@ class Api:
             return None
         return skill.to_dict()
 
+    async def edit_message(self, thread_id: str, message_id: str, new_content: str) -> dict:
+        """编辑已发送消息并删除后续消息，返回成功状态（前端随后调用 sendChatStream 重发）。
+
+        从 checkpoint 中找到 message_id 对应消息，使用 RemoveMessage 删除该消息
+        及其之后的所有消息（AI 回复、工具调用等），前端随后将新内容作为新消息发送。
+        """
+        if self._agent is None:
+            return {"success": False, "error": "Agent 未就绪"}
+        from langgraph.graph.message import RemoveMessage
+        config = {"configurable": {"thread_id": thread_id}}
+        try:
+            state = await self._agent.aget_state(config)
+            messages = list(state.values.get("messages", []) or [])
+            # 找到目标消息的位置
+            cut_idx = None
+            for i, m in enumerate(messages):
+                if getattr(m, "id", "") == message_id:
+                    cut_idx = i
+                    break
+            if cut_idx is None:
+                return {"success": False, "error": f"消息 {message_id} 不存在"}
+            # 删除该消息及之后所有消息
+            to_remove = [RemoveMessage(id=m.id) for m in messages[cut_idx:] if getattr(m, "id", None)]
+            if to_remove:
+                await self._agent.aupdate_state(config, {"messages": to_remove}, as_node="__start__")
+            return {"success": True}
+        except Exception as exc:
+            return {"success": False, "error": str(exc)}
+
     # ── 记忆管理 ──
 
     async def compress_session(self, thread_id: str) -> dict:

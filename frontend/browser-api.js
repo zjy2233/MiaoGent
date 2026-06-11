@@ -149,6 +149,11 @@
       body: JSON.stringify(p),
     }),
     getTools: () => fetchJSON(`${BASE_URL}/api/tools`),
+    editMessage: (tid, mid, newContent) => fetchJSON(`${BASE_URL}/api/chat/edit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ thread_id: tid, message_id: mid, new_content: newContent }),
+    }),
     getSkills: () => fetchJSON(`${BASE_URL}/api/skills`),
     getSkillDetail: (name) => fetchJSON(`${BASE_URL}/api/skills/${name}`),
     triggerConsolidation: () => fetchJSON(`${BASE_URL}/api/consolidate`, { method: 'POST' }),

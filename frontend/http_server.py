@@ -214,6 +214,18 @@ async def get_tools(request: Request) -> Response:
     return json_response(get_api(request.app).get_tools())
 
 
+async def post_chat_edit(request: Request) -> Response:
+    """编辑已发送消息并删除后续消息。"""
+    body = await json_request(request)
+    thread_id = body.get("thread_id", "")
+    message_id = body.get("message_id", "")
+    new_content = body.get("new_content", "")
+    if not thread_id or not message_id:
+        return json_response({"error": "thread_id 和 message_id 不能为空"}, status=400)
+    result = await get_api(request.app).edit_message(thread_id, message_id, new_content)
+    return json_response(result)
+
+
 async def post_consolidate(request: Request) -> Response:
     """手动触发知识归并。"""
     result = await get_api(request.app).trigger_consolidation()
@@ -418,6 +430,7 @@ def setup_routes(app: web.Application) -> None:
     app.router.add_route("GET", "/api/tools", get_tools)
     app.router.add_route("GET", "/api/skills", get_skills)
     app.router.add_route("GET", "/api/skills/{name}", get_skill_detail)
+    app.router.add_route("POST", "/api/chat/edit", post_chat_edit)
     app.router.add_route("POST", "/api/consolidate", post_consolidate)
     app.router.add_route("POST", "/api/chat/resume", post_resume)
     app.router.add_route("POST", "/api/chat/resume/stream", post_resume_stream)

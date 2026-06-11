@@ -849,7 +849,93 @@ body.panel-dragging #panel-mode {
   background: linear-gradient(145deg, #6c5ce7, #a29bfe);
   color: white;
   border-bottom-right-radius: 4px;
+  position: relative;
 }
+.chat-msg.human:hover .msg-edit-btn {
+  opacity: 1;
+}
+.chat-msg.human.editing {
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.15);
+  padding: 0;
+  max-width: 100%;
+}
+
+/* ── Edit button on hover ── */
+.msg-edit-btn {
+  position: absolute;
+  top: 4px;
+  left: -28px;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(255,255,255,0.1);
+  color: rgba(255,255,255,0.5);
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.msg-edit-btn:hover {
+  background: rgba(255,255,255,0.25);
+  color: rgba(255,255,255,0.9);
+}
+
+/* ── Edit textarea ── */
+.msg-edit-textarea {
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.5;
+  outline: none;
+  resize: vertical;
+}
+.msg-edit-textarea:focus {
+  background: rgba(255,255,255,0.14);
+  box-shadow: 0 0 0 1px rgba(162, 155, 254, 0.4);
+}
+
+/* ── Edit actions ── */
+.msg-edit-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  padding: 6px 8px 8px;
+}
+.msg-edit-confirm,
+.msg-edit-cancel {
+  padding: 5px 14px;
+  border: none;
+  border-radius: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: transform 100ms, opacity 0.15s;
+}
+.msg-edit-confirm {
+  background: linear-gradient(135deg, #6c5ce7, #5a4bd1);
+  color: #fff;
+}
+.msg-edit-confirm:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+}
+.msg-edit-cancel {
+  background: rgba(255,255,255,0.1);
+  color: rgba(255,255,255,0.6);
+}
+.msg-edit-cancel:hover { background: rgba(255,255,255,0.18); }
 
 .chat-msg.ai {
   align-self: flex-start;

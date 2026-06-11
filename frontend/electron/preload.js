@@ -176,6 +176,14 @@ const api = {
     }).then((r) => r.json()),
   getTools: () => fetch(`${BASE_URL}/api/tools`).then((r) => r.json()),
 
+  // ── 消息编辑 ────────────────────────────────────────────────────────
+  editMessage: (threadId, messageId, newContent) =>
+    fetch(`${BASE_URL}/api/chat/edit`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ thread_id: threadId, message_id: messageId, new_content: newContent }),
+    }).then((r) => r.json()),
+
   // ── Skill 查询（只读） ───────────────────────────────────────────────
   getSkills: () => fetch(`${BASE_URL}/api/skills`).then((r) => r.json()),
   getSkillDetail: (name) =>
