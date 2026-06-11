@@ -1,7 +1,7 @@
 """MemoryStore：结构化跨会话记忆系统。
 
 三层记忆架构：
-1. 核心记忆 (Core Memory) — 始终注入上下文，存储在 ``data/memory.json``
+1. 核心记忆 (Core Memory) — 始终注入上下文，存储在 ``~/.miaogent/memory.json``
    - identity / environment / preferences / projects / facts
 2. 工作记忆 (Working Memory) — 自动提取写入 SQLite，跨会话持久化
 3. 存档记忆 (Archival Memory) — 已有 checkpointer 全量历史
@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+from src.core.miaogent_home import get_data_path
 
 
 # ── 数据模型 ──────────────────────────────────────────────────────────────
@@ -83,11 +85,11 @@ class MemoryStore:
 
     def __init__(
         self,
-        memory_path: str | Path = "data/memory.json",
-        db_path: str | Path = "data/memory.db",
+        memory_path: str | Path = "",
+        db_path: str | Path = "",
     ) -> None:
-        self._memory_path = Path(memory_path)
-        self._db_path = Path(db_path)
+        self._memory_path = Path(memory_path) if memory_path else get_data_path("memory.json")
+        self._db_path = Path(db_path) if db_path else get_data_path("memory.db")
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._async_lock = asyncio.Lock()
         self._ensure_db()

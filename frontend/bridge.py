@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from src.core.config import Settings
+from src.core.miaogent_home import get_data_path
 from src.store.sessions import SessionRegistry
 from src.store.soul import ProfileManager, SoulManager
 from src.store.memory_store import MemoryStore
@@ -154,9 +155,9 @@ class Api:
     ) -> None:
         self.root_dir = Path(root_dir) if root_dir else _project_root()
         self._env_path = self.root_dir / ".env"
-        self._sessions_path = self.root_dir / "data" / ".sessions.json"
-        self._soul_path = self.root_dir / "data" / "soul.json"
-        self._profile_path = self.root_dir / "data" / "profile.json"
+        self._sessions_path = get_data_path(".sessions.json")
+        self._soul_path = get_data_path("soul.json")
+        self._profile_path = get_data_path("profile.json")
         self._tools_dir = self.root_dir / "src" / "tools"
         self._agent = agent
         self._memory_manager = memory_manager

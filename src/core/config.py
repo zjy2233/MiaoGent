@@ -8,6 +8,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from src.core.miaogent_home import get_data_path
+
 # 加载项目根目录下的 .env（如果存在），不覆盖已有环境变量
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 load_dotenv(_PROJECT_ROOT / ".env", override=False)
@@ -46,7 +48,7 @@ class Settings:
     shell_high_risk_block: bool = True
     shell_allowed_patterns: list[str] = field(default_factory=list)
     shell_blocked_patterns: list[str] = field(default_factory=list)
-    db_path: str = "data/history.db"
+    db_path: str = ""
     max_turns: int = 10
     max_message_chars: int = 12000
     compression_model: str = ""
@@ -76,7 +78,7 @@ class Settings:
             shell_high_risk_block=os.getenv("SHELL_HIGH_RISK_BLOCK", "true").lower() == "true",
             shell_allowed_patterns=_env_list("SHELL_ALLOWED_PATTERNS"),
             shell_blocked_patterns=_env_list("SHELL_BLOCKED_PATTERNS"),
-            db_path=os.getenv("DB_PATH", "data/history.db"),
+            db_path=os.getenv("DB_PATH", "") or str(get_data_path("history.db")),
             max_turns=_env_int("MAX_TURNS", 10),
             max_message_chars=_env_int("MAX_MESSAGE_CHARS", 12000),
             compression_model=os.getenv("COMPRESSION_MODEL", "").strip(),

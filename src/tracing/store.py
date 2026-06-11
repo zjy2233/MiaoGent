@@ -10,14 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from src.tracing.models import SpanData
-
-
-def _get_data_path(name: str) -> Path:
-    """Get path in ~/.miaogent/ directory."""
-    from pathlib import Path as _Path
-    home = _Path.home() / ".miaogent"
-    home.mkdir(parents=True, exist_ok=True)
-    return home / name
+from src.core.miaogent_home import get_data_path
 
 
 SCHEMA_SQL = """
@@ -50,7 +43,7 @@ INDEX_STARTED_SQL = "CREATE INDEX IF NOT EXISTS idx_spans_started ON spans(start
 
 class TraceStore:
     def __init__(self, db_path: str | None = None):
-        resolved = Path(db_path).resolve() if db_path else _get_data_path("traces.db")
+        resolved = Path(db_path).resolve() if db_path else get_data_path("traces.db")
         self._db_path = str(resolved)
         self._lock = threading.Lock()
         self._init_db()
