@@ -208,10 +208,17 @@ function initPanelMode(panelName) {
   });
 
   // ── 关闭：按钮 / Escape ─────────────────
-  const close = () => {
-    // fire-and-forget: 压缩记忆不阻塞关闭
+  const close = async () => {
+    // 等待 compressSession 完成（最多 5 秒），确保 profile 发现不被中断
     if (window.api && window.api.compressSession && chatThreadId) {
-      window.api.compressSession(chatThreadId).catch(() => {});
+      try {
+        await Promise.race([
+          window.api.compressSession(chatThreadId),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 5000)),
+        ]);
+      } catch (e) {
+        // 忽略超时或失败，继续关闭
+      }
     }
     if (window.api && window.api.closePanel) {
       window.api.closePanel();
@@ -227,7 +234,11 @@ function initPanelMode(panelName) {
   });
 
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') close();
+    if (e.key === 'Escape') {
+      // 编辑模式不关闭面板
+      if (document.querySelector('.chat-msg.human.editing')) return;
+      close();
+    }
   });
 
   // ── 直接关闭窗口时（鼠标点击 X）压缩记忆 ──
@@ -359,13 +370,20 @@ function _bindSettingsListeners() {
       alert('JSON 解析失败: ' + e.message);
       return;
     }
+    const saveBtn = document.getElementById('save-settings');
+    const originalText = saveBtn.textContent;
     try {
       await Promise.all([
         window.api.saveSettings(settings),
         window.api.saveSoul(soul),
         window.api.saveProfile(profile),
       ]);
-      window.api.closePanel();
+      saveBtn.textContent = '已保存';
+      saveBtn.classList.add('saved-flash');
+      setTimeout(() => {
+        saveBtn.textContent = originalText;
+        saveBtn.classList.remove('saved-flash');
+      }, 1500);
     } catch (e) {
       alert('保存失败: ' + (e && e.message ? e.message : e));
     }
@@ -788,6 +806,7 @@ function openChat(threadId, isNew) {
   // 清空旧消息和工具卡片状态
   const container = document.getElementById('chat-messages');
   container.innerHTML = '';
+  _toolCardId = 0;
   _activeToolCards = {};
   _earliestMsgId = null;
   _hasMoreMessages = false;
@@ -1072,7 +1091,8 @@ function showCommandConfirm(data, callback) {
   cancelBtn.addEventListener('click', onCancel);
 }
 
-let _activeToolCards = {};  // run_id → DOM element
+let _toolCardId = 0;
+let _activeToolCards = {};  // id → DOM element (counter-based, not run_id to avoid empty-key collision)
 
 // ── SSE 事件处理 ───────────────────────────────────────────────────────
 
@@ -1099,34 +1119,53 @@ function handleStreamEvent(event, data, aiBubble) {
     }
 
     case 'tool_start': {
+      const id = ++_toolCardId;
       const card = _createToolCard(data);
-      _activeToolCards[data.run_id] = card;
+      card._toolName = data.name;
+      card._toolId = id;
+      _activeToolCards[id] = card;
       container.insertBefore(card, aiBubble);
       scrollChatToBottom();
       return true;
     }
 
     case 'tool_end': {
-      const card = _activeToolCards[data.run_id];
-      if (card) {
-        _updateToolCard(card, 'done', data.output);
-        delete _activeToolCards[data.run_id];
-      } else {
-        // 未找到对应卡片（可能在页面刷新后），创建完成卡片
-        const doneCard = _createToolCard(data);
-        _updateToolCard(doneCard, 'done', data.output);
-        container.insertBefore(doneCard, aiBubble);
+      // 检测输出是否包含错误信息（工具内部 catch 后返回字符串的情况）
+      const output = data.output || '';
+      const isError = /^错误[：:]|^Error[：:]|^所有搜索引擎均不可用/i.test(output);
+      const ids = Object.keys(_activeToolCards);
+      let found = false;
+      for (const id of ids) {
+        const card = _activeToolCards[id];
+        if (card._toolName === data.name) {
+          _updateToolCard(card, isError ? 'error' : 'done', output);
+          delete _activeToolCards[id];
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        const entryCard = _createToolCard(data);
+        _updateToolCard(entryCard, isError ? 'error' : 'done', output);
+        container.insertBefore(entryCard, aiBubble);
       }
       scrollChatToBottom();
       return true;
     }
 
     case 'tool_error': {
-      const card = _activeToolCards[data.run_id];
-      if (card) {
-        _updateToolCard(card, 'error', data.error);
-        delete _activeToolCards[data.run_id];
-      } else {
+      const ids = Object.keys(_activeToolCards);
+      let found = false;
+      for (const id of ids) {
+        const card = _activeToolCards[id];
+        if (card._toolName === data.name) {
+          _updateToolCard(card, 'error', data.error);
+          delete _activeToolCards[id];
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
         const errCard = _createToolCard(data);
         _updateToolCard(errCard, 'error', data.error);
         container.insertBefore(errCard, aiBubble);
@@ -1213,56 +1252,83 @@ function addMessageBubble(role, content, msgId) {
   } else {
     div.textContent = content;
     div._rawText = content;
-    // human 消息悬浮编辑按钮（仅已有 ID 的消息）
-    if (msgId) _addEditButton(div);
   }
   container.appendChild(div);
+  // 编辑按钮（必须在 DOM 插入后调用，因为按钮放在气泡外部）
+  if (msgId && role !== 'ai' && role !== 'assistant') _addEditButton(div);
 }
 
 function _addEditButton(bubble) {
   const btn = document.createElement('button');
   btn.className = 'msg-edit-btn';
-  btn.title = '编辑消息';
-  btn.textContent = '\u270E'; // pencil
+  btn.title = '编辑后重发 (将移除后续回复)';
+  btn.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg> 编辑';
   btn.addEventListener('click', (e) => {
     e.stopPropagation();
     _enterEditMode(bubble);
   });
-  bubble.appendChild(btn);
+  // 放在气泡后面而不是内部
+  bubble.insertAdjacentElement('afterend', btn);
 }
 
 function _enterEditMode(bubble) {
   const msgId = bubble.dataset.msgId;
   const originalText = bubble._rawText || bubble.textContent || '';
-  bubble.classList.add('editing');
 
-  // 替换为编辑区
+  // 移除气泡外部的编辑按钮
+  const existingBtn = bubble.nextElementSibling;
+  if (existingBtn && existingBtn.classList.contains('msg-edit-btn')) {
+    existingBtn.remove();
+  }
+
+  bubble.classList.add('editing');
+  bubble.innerHTML = '';
+
+  // textarea
   const textarea = document.createElement('textarea');
   textarea.className = 'msg-edit-textarea';
   textarea.value = originalText;
-  textarea.rows = Math.min(6, originalText.split('\n').length || 1);
-  // 编辑按钮和取消/确认
+  textarea.placeholder = '修改后重发...';
+
+  const autoResize = () => {
+    textarea.style.height = 'auto';
+    textarea.style.height = Math.max(60, Math.min(textarea.scrollHeight, 240)) + 'px';
+  };
+
+  // 警告 + 快捷键提示（紧凑一行）
+  const hint = document.createElement('div');
+  hint.className = 'msg-edit-warning';
+  hint.textContent = '⚠ 重发会移除后续所有回复 · Esc 取消 · Ctrl+Enter 确认';
+
+  // 按钮行
   const actions = document.createElement('div');
   actions.className = 'msg-edit-actions';
-  const confirmBtn = document.createElement('button');
-  confirmBtn.className = 'msg-edit-confirm';
-  confirmBtn.textContent = '确认重发';
-  confirmBtn.disabled = true;
   const cancelBtn = document.createElement('button');
   cancelBtn.className = 'msg-edit-cancel';
   cancelBtn.textContent = '取消';
-
-  bubble.innerHTML = '';
-  bubble.appendChild(textarea);
-  actions.appendChild(confirmBtn);
+  const confirmBtn = document.createElement('button');
+  confirmBtn.className = 'msg-edit-confirm';
+  confirmBtn.textContent = '确认并重发';
+  confirmBtn.disabled = true;
   actions.appendChild(cancelBtn);
+  actions.appendChild(confirmBtn);
+
+  bubble.appendChild(textarea);
+  bubble.appendChild(hint);
   bubble.appendChild(actions);
-  textarea.focus();
+
+  // 聚焦并全选
+  requestAnimationFrame(() => {
+    textarea.focus();
+    textarea.setSelectionRange(0, originalText.length);
+    autoResize();
+  });
 
   textarea.addEventListener('input', () => {
-    confirmBtn.disabled = !textarea.value.trim() || textarea.value === originalText;
+    autoResize();
+    const t = textarea.value.trim();
+    confirmBtn.disabled = !t || t === originalText;
   });
-  confirmBtn.disabled = true;
 
   const doCancel = () => {
     bubble.classList.remove('editing');
@@ -1273,14 +1339,18 @@ function _enterEditMode(bubble) {
   };
 
   cancelBtn.addEventListener('click', doCancel);
-
   textarea.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { e.preventDefault(); doCancel(); }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); doCancel(); }
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      if (!confirmBtn.disabled) confirmBtn.click();
+    }
   });
 
   confirmBtn.addEventListener('click', async () => {
     const newText = textarea.value.trim();
     if (!newText || newText === originalText) return;
+
     confirmBtn.disabled = true;
     confirmBtn.textContent = '发送中...';
 
@@ -1288,9 +1358,7 @@ function _enterEditMode(bubble) {
       if (msgId && window.api.editMessage) {
         await window.api.editMessage(chatThreadId, msgId, newText);
       }
-      // 移除当前气泡及之后的所有消息
       _removeMessagesFrom(bubble);
-      // 发送新消息
       const input = document.getElementById('chat-input');
       input.value = newText;
       sendChatMessage();
@@ -1301,6 +1369,7 @@ function _enterEditMode(bubble) {
     }
   });
 }
+
 
 function _removeMessagesFrom(bubble) {
   const container = document.getElementById('chat-messages');
@@ -2193,32 +2262,40 @@ async function showTraceDetail(traceId) {
         const typeClass = s.span_type === 'llm_call' ? 'llm'
           : s.span_type === 'tool_call' ? 'tool'
           : s.span_type === 'delegate_task' ? 'delegate'
+          : s.span_type === 'agent_step' ? 'step'
           : s.span_type === 'session_turn' ? 'session' : 'step';
 
         const icon = s.span_type === 'session_turn' ? '&#9654;'
           : s.span_type === 'llm_call' ? '&#9679;'
-          : s.span_type === 'agent_step' ? '&#9632;'
-          : s.span_type === 'delegate_task' ? '&#9881;'
+          : s.span_type === 'agent_step' ? (s.model === 'tools' ? '&#9881;' : '&#9670;')
+          : s.span_type === 'delegate_task' ? '&#10031;'
           : s.span_type === 'tool_call' ? '&#9670;' : '&#9654;';
+
+        const isDelegate = s.span_type === 'delegate_task';
+        const isAgentStep = s.span_type === 'agent_step';
+        const stepLabel = (s.model === 'tools') ? 'tools' : (s.model === 'agent' || s.model === 'model') ? 'agent' : (s.model || 'step');
 
         const name = s.span_type === 'llm_call' ? (s.model || 'LLM')
           : s.span_type === 'tool_call' ? (s.tool_name || 'tool')
-          : s.span_type === 'delegate_task' ? '子Agent'
+          : s.span_type === 'delegate_task' ? ('🤖 ' + (s.tool_name || '子Agent'))
           : s.span_type === 'session_turn' ? '会话'
-          : s.span_type === 'agent_step' ? 'Agent' : s.span_type;
+          : s.span_type === 'agent_step' ? stepLabel : s.span_type;
 
         const startTime = s.started_at ? new Date(s.started_at).toLocaleTimeString() : '';
         const dur = formatDuration(s.duration_ms || 0);
 
+        const rowClass = isDelegate ? 'trace-waterfall-row delegate-container' : 'trace-waterfall-row';
+        const barClass = isDelegate ? 'trace-waterfall-bar delegate ' + typeClass : 'trace-waterfall-bar ' + typeClass;
+
         return `
-        <div class="trace-waterfall-row">
+        <div class="${rowClass}">
           <div class="trace-waterfall-label" style="padding-left:${8 + depth * 14}px;">
             <span class="wf-icon">${icon}</span>
             <span class="wf-name" title="${name}">${name}</span>
           </div>
           <div class="trace-waterfall-track">
             ${gridHtml}
-            <div class="trace-waterfall-bar ${typeClass}"
+            <div class="${barClass}"
                  style="left:${offset}%;width:${width}%;">
               <div class="trace-waterfall-tooltip">
                 <div style="font-weight:600;margin-bottom:3px;color:#fff;">${name}</div>
@@ -2238,7 +2315,7 @@ async function showTraceDetail(traceId) {
         <div class="trace-waterfall-legend">
           <span><span class="trace-waterfall-legend-dot" style="background:#8b5cf6;"></span>会话</span>
           <span><span class="trace-waterfall-legend-dot" style="background:#3b82f6;"></span>LLM</span>
-          <span><span class="trace-waterfall-legend-dot" style="background:#10b981;"></span>Agent</span>
+          <span><span class="trace-waterfall-legend-dot" style="background:#10b981;"></span>Agent 步骤</span>
           <span><span class="trace-waterfall-legend-dot" style="background:#f59e0b;"></span>工具</span>
           <span><span class="trace-waterfall-legend-dot" style="background:#ec4899;"></span>子Agent</span>
           <span style="margin-left:auto;color:#555;">缩进 = 嵌套深度</span>
@@ -2260,19 +2337,21 @@ async function showTraceDetail(traceId) {
     // Enhanced span tree with I/O
     function renderEnhancedTree(node, depth) {
       if (!node) return '';
+      const isDelegate = node.span_type === 'delegate_task';
+      const isAgentStep = node.span_type === 'agent_step';
       const typeLabel = node.span_type === 'session_turn' ? '会话'
         : node.span_type === 'llm_call' ? 'LLM'
-        : node.span_type === 'agent_step' ? 'Agent'
+        : node.span_type === 'agent_step' ? ((node.model === 'tools') ? 'tools' : (node.model === 'agent' || node.model === 'model') ? 'agent' : 'Agent')
         : node.span_type === 'delegate_task' ? '子Agent'
         : node.span_type === 'tool_call' ? '工具' : node.span_type;
-      const typeIcon = node.span_type === 'session_turn' ? '&gt;'
-        : node.span_type === 'llm_call' ? '*'
-        : node.span_type === 'agent_step' ? '-'
-        : node.span_type === 'delegate_task' ? '&diams;'
-        : node.span_type === 'tool_call' ? '#' : '&gt;';
+      const typeIcon = node.span_type === 'session_turn' ? '&#9654;'
+        : node.span_type === 'llm_call' ? '&#9679;'
+        : node.span_type === 'agent_step' ? ((node.model === 'tools') ? '&#9881;' : '&#9670;')
+        : node.span_type === 'delegate_task' ? '&#10031;'
+        : node.span_type === 'tool_call' ? '&#9670;' : '&#9654;';
       const nameInfo = node.span_type === 'llm_call' ? (node.model || '')
         : node.span_type === 'tool_call' ? node.tool_name || ''
-        : node.span_type === 'delegate_task' ? (node.tool_name || 'sub-agent')
+        : node.span_type === 'delegate_task' ? ('🤖 ' + (node.tool_name || 'sub-agent'))
         : node.span_type === 'session_turn' ? '' : (node.model || '');
       const tokenInfo = (node.input_tokens || node.output_tokens)
         ? `${node.input_tokens || 0}+${node.output_tokens || 0} t` : '';
@@ -2282,9 +2361,14 @@ async function showTraceDetail(traceId) {
       const spanId = node.span_id || 's' + Math.random().toString(36).slice(2, 8);
       const errorClass = hasError ? 'has-error' : '';
       const children = node.children || [];
+      const rowTypeClass = node.span_type === 'session_turn' ? 'session'
+        : node.span_type === 'llm_call' ? 'llm'
+        : node.span_type === 'tool_call' ? 'tool'
+        : node.span_type === 'delegate_task' ? 'delegate'
+        : 'step';
 
       let html = `
-        <div class="trace-span-row ${node.span_type === 'session_turn' ? 'session' : node.span_type === 'llm_call' ? 'llm' : node.span_type === 'tool_call' ? 'tool' : node.span_type === 'delegate_task' ? 'delegate' : 'step'} ${errorClass}" style="margin-left:${depth * 20}px;">
+        <div class="trace-span-row ${rowTypeClass} ${errorClass}" style="margin-left:${depth * 20}px;">
           <span class="trace-span-icon">${typeIcon}</span>
           <span class="trace-span-label">${typeLabel}${nameInfo ? ': ' + nameInfo : ''}</span>
           ${tokenInfo ? `<span style="font-size:10px;color:#888;white-space:nowrap;">${tokenInfo}</span>` : ''}
@@ -2310,7 +2394,15 @@ async function showTraceDetail(traceId) {
           </div>
         ` : ''}
       `;
-      children.forEach(c => { html += renderEnhancedTree(c, depth + 1); });
+
+      // 子 Agent 的子节点用包裹容器突出显示
+      if (isDelegate && children.length > 0) {
+        html += '<div class="trace-delegate-children">';
+        children.forEach(c => { html += renderEnhancedTree(c, depth + 1); });
+        html += '</div>';
+      } else {
+        children.forEach(c => { html += renderEnhancedTree(c, depth + 1); });
+      }
       return html;
     }
 

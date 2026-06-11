@@ -89,13 +89,14 @@ async def init_agent(app: web.Application) -> None:
 
 
 async def close_agent(app: web.Application) -> None:
-    # 退出时触发知识归并
+    """退出时触发知识归并 + 活跃会话 profile 发现。"""
     try:
         api = app.get("api")
         if api:
-            await api.trigger_consolidation()
+            result = await api.close()
+            logger.info("close_agent: %s", result)
     except Exception as exc:
-        logger.warning("Consolidation on exit failed: %s", exc)
+        logger.warning("close_agent failed: %s", exc)
 
     conn = app.get("_db_conn")
     if conn is not None:

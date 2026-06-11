@@ -13,10 +13,13 @@ from __future__ import annotations
 import ast
 import asyncio
 import json
+import logging
 import os
 from dataclasses import MISSING, fields
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 from src.core.config import Settings
 from src.core.miaogent_home import get_data_path
@@ -152,16 +155,28 @@ class TracingStreamHandler:
         self._tracer = tracer
         self._run_id_to_span_id: dict[str, str] = {}
         self._detect_delegate = detect_delegate
+        self._has_graph_chain = False  # 跳过第一个图级 chain
+        self._chain_stack: list[str] = []  # agent_step span 栈（嵌套 chain 专用）
 
     def current_span_id(self) -> str | None:
         return self._tracer.current_span_id
+
+    _CHAIN_SKIP_NAMES: frozenset[str] = frozenset({
+        "LangGraph", "__start__", "__end__",
+    })
 
     def handle_event(self, event: dict) -> None:
         """Dispatch astream_events v2 event to the appropriate span handler."""
         kind = event.get("event", "")
         run_id = event.get("run_id")
 
-        if kind == "on_chat_model_start":
+        if kind == "on_chain_start":
+            self._on_chain_start(run_id, event)
+        elif kind == "on_chain_end":
+            self._on_chain_end(run_id, event)
+        elif kind == "on_chain_error":
+            self._on_chain_error(run_id, event)
+        elif kind == "on_chat_model_start":
             self._on_chat_model_start(run_id, event)
         elif kind == "on_chat_model_end":
             self._on_chat_model_end(run_id, event)
@@ -173,9 +188,14 @@ class TracingStreamHandler:
             self._on_tool_end(run_id, event)
         elif kind == "on_tool_error":
             self._on_tool_error(run_id, event)
+        elif kind == "on_chain_error":
+            self._on_chain_error(run_id, event)
 
     def flush(self) -> None:
         """End any remaining open spans."""
+        # 先关闭残留的 agent_step（逆序出栈）
+        while self._chain_stack:
+            self._tracer.end_span(self._chain_stack.pop())
         for sid in list(self._tracer._span_stack):
             self._tracer.end_span(sid)
 
@@ -274,6 +294,32 @@ class TracingStreamHandler:
                 from src.tracing.context import clear_trace_context
                 clear_trace_context()
 
+    def _on_chain_start(self, run_id: str, event: dict) -> None:
+        """Handle on_chain_start: create agent_step span for LangGraph node boundaries."""
+        if not self._has_graph_chain:
+            self._has_graph_chain = True
+            return
+        name = event.get("name", "")
+        if not name or name in self._CHAIN_SKIP_NAMES or name.startswith("__"):
+            return
+        sid = self._tracer.start_span("agent_step", model=name)
+        self._chain_stack.append(sid)  # 用独立栈跟踪，不依赖 run_id
+
+    def _on_chain_end(self, run_id: str, event: dict) -> None:
+        """Handle on_chain_end: close the innermost agent_step span."""
+        if self._chain_stack:
+            sid = self._chain_stack.pop()
+            self._tracer.end_span(sid)
+
+    def _on_chain_error(self, run_id: str, event: dict) -> None:
+        """Handle on_chain_error: close the innermost agent_step with error."""
+        if self._chain_stack:
+            sid = self._chain_stack.pop()
+            self._tracer.end_span(
+                sid, status="error",
+                error_message=str(event.get("data", {}).get("error", "")),
+            )
+
 
 class Api:
     """HTTP API 桥接层：提供会话管理、设置读写、Soul/Profile、工具枚举、聊天等功能。
@@ -305,6 +351,7 @@ class Api:
         self._skill_registry = None
         self._tools = tools or []  # 工具列表，用于 debug 上下文显示
         self._tracing_api = tracing_api
+        self._active_thread_id: str = ""  # 活跃会话 thread_id，退出时用于 profile 发现
 
     # ── 会话管理 ──
 
@@ -513,6 +560,35 @@ class Api:
         except Exception as exc:
             return {"consolidated": False, "error": str(exc)}
 
+    async def close(self) -> dict:
+        """应用退出时调用：触发知识归并 + 活跃会话的 profile 发现和记忆提取。"""
+        result: dict[str, Any] = {"consolidated": False, "profile_discovered": False}
+
+        # 1. 知识归并
+        try:
+            if self._memory_manager is not None:
+                llm = getattr(self._memory_manager, "compression_llm", None)
+                if llm is not None:
+                    from src.store.knowledge import KnowledgeConsolidator
+                    consolidator = KnowledgeConsolidator(llm, self._memory_store)
+                    ck = await consolidator.consolidate()
+                    result["consolidated"] = ck.get("consolidated", False)
+                    result["consolidate_count"] = ck.get("count", 0)
+        except Exception as exc:
+            logger.warning("close: consolidation failed: %s", exc)
+
+        # 2. 活跃会话的 profile 发现（force=True 确保执行）
+        try:
+            if self._memory_manager is not None and self._active_thread_id:
+                ok = await self._memory_manager.compress_if_needed(
+                    self._active_thread_id, force=True
+                )
+                result["profile_discovered"] = ok
+        except Exception as exc:
+            logger.warning("close: profile discovery failed: %s", exc)
+
+        return result
+
     # ── 聊天功能（HTTP 服务器模式） ──
 
     async def create_session(self) -> dict[str, str]:
@@ -637,6 +713,7 @@ class Api:
             pass
 
     async def chat(self, thread_id: str, message: str) -> dict:
+        self._active_thread_id = thread_id
         if self._agent is None:
             return {"response": "", "error": "Agent 未就绪（请检查 LLM 配置）"}
         from langchain_core.messages import HumanMessage
@@ -665,6 +742,7 @@ class Api:
         return {"response": str(content) if content else "(空回答)"}
 
     async def resume_chat(self, thread_id: str, approved: bool) -> dict:
+        self._active_thread_id = thread_id
         if self._agent is None:
             return {"response": "", "error": "Agent 未就绪"}
         from langgraph.types import Command
@@ -735,6 +813,7 @@ class Api:
             message: 用户消息（resume 模式时传空字符串）。
             resume: None=正常发送消息, True=恢复(批准中断), False=拒绝中断。
         """
+        self._active_thread_id = thread_id
         if self._agent is None:
             yield {"event": "error", "data": {"error": "Agent 未就绪（请检查 LLM 配置）"}}
             return
