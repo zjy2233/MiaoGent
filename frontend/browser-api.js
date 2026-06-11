@@ -131,6 +131,7 @@
     sendChatStream: (tid, msg) => _startChatStream(tid, msg),
     resumeChatStream: (tid, approved) => _startResumeStream(tid, approved),
     getSettings: () => fetchJSON(`${BASE_URL}/api/settings`),
+    getSettingsDefaults: () => fetchJSON(`${BASE_URL}/api/settings/defaults`),
     saveSettings: (s) => fetchJSON(`${BASE_URL}/api/settings`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -184,6 +184,10 @@ async def get_settings(request: Request) -> Response:
     return json_response(get_api(request.app).get_settings())
 
 
+async def get_settings_defaults(request: Request) -> Response:
+    return json_response(get_api(request.app).get_settings_defaults())
+
+
 async def post_settings(request: Request) -> Response:
     body = await json_request(request)
     get_api(request.app).save_settings(body)
@@ -422,6 +426,7 @@ def setup_routes(app: web.Application) -> None:
     app.router.add_route("POST", "/api/chat", post_chat)
     app.router.add_route("POST", "/api/chat/stream", post_chat_stream)
     app.router.add_route("GET", "/api/settings", get_settings)
+    app.router.add_route("GET", "/api/settings/defaults", get_settings_defaults)
     app.router.add_route("POST", "/api/settings", post_settings)
     app.router.add_route("GET", "/api/soul", get_soul)
     app.router.add_route("POST", "/api/soul", post_soul)

@@ -375,6 +375,31 @@ function _bindSettingsListeners() {
     if (window.api) window.api.closePanel();
   });
 
+  // 恢复默认值
+  document.getElementById('reset-settings').addEventListener('click', async () => {
+    try {
+      if (!window.api || !window.api.getSettingsDefaults) return;
+      const defaults = await window.api.getSettingsDefaults();
+      const providerVal = defaults.llm_provider || 'deepseek';
+      const providerEl = document.getElementById('llm-provider');
+      if (providerEl) providerEl.value = providerVal === 'deepseek' ? 'openai' : providerVal;
+      document.getElementById('llm-base-url').value   = defaults.llm_base_url || '';
+      document.getElementById('api-key').value         = defaults.llm_api_key || defaults.deepseek_api_key || '';
+      document.getElementById('model-name').value      = defaults.llm_model || defaults.deepseek_model || '';
+      document.getElementById('soul-config').value     = JSON.stringify({}, null, 2);
+      document.getElementById('profile-config').value  = JSON.stringify({}, null, 2);
+      const debugToggle = document.getElementById('debug-toggle');
+      if (debugToggle) {
+        debugToggle.classList.remove('active');
+        debugToggle.dataset.enabled = '0';
+        const label = debugToggle.parentElement.querySelector('.toggle-label');
+        if (label) label.textContent = '关';
+      }
+    } catch (e) {
+      console.error('Failed to load defaults', e);
+    }
+  });
+
 }
 
 async function _refreshSettingsData() {

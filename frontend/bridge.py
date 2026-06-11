@@ -370,6 +370,13 @@ class Api:
                 result[key] = raw if raw else _get_default(key)
         return result
 
+    def get_settings_defaults(self) -> dict[str, Any]:
+        """返回所有设置的默认值。"""
+        result: dict[str, Any] = {}
+        for key in _SETTINGS_KEY_TO_ENV:
+            result[key] = _get_default(key)
+        return result
+
     def save_settings(self, settings: dict[str, Any]) -> None:
         existing = self._read_env_file()
         for key, value in settings.items():

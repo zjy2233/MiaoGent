@@ -154,6 +154,7 @@ const api = {
     _startResumeStream(threadId, approved);
   },
   getSettings: () => fetch(`${BASE_URL}/api/settings`).then((r) => r.json()),
+  getSettingsDefaults: () => fetch(`${BASE_URL}/api/settings/defaults`).then((r) => r.json()),
   saveSettings: (s) =>
     fetch(`${BASE_URL}/api/settings`, {
       method: 'POST',
