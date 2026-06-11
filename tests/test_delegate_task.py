@@ -50,12 +50,12 @@ class TestBuildDelegateTask:
 
         # 重置递归深度
         import src.tools.delegate_task as dt
-        dt._recursion_depth = 99  # 模拟超出限制
+        dt._recursion_depth.set(99)  # 模拟超出限制
 
         result = await tool_fn.ainvoke({"task": "test", "timeout": 10})
         assert "已达上限" in result or "3" in result
 
-        dt._recursion_depth = 0  # 清理
+        dt._recursion_depth.set(0)  # 清理
 
     @pytest.mark.asyncio
     async def test_sub_agent_execution_error_is_caught(self, mocker):
@@ -64,7 +64,7 @@ class TestBuildDelegateTask:
 
         original_run = dt.run_sub_agent
         dt.run_sub_agent = mocker.AsyncMock(side_effect=Exception("mock error"))
-        dt._recursion_depth = 0
+        dt._recursion_depth.set(0)
 
         mock_llm = None
         tool_fn = build_delegate_task(mock_llm)

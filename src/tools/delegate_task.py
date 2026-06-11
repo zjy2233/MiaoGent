@@ -12,6 +12,7 @@ sub-agent 无法调用此工具，从根本上防止无限递归。
 from __future__ import annotations
 
 import asyncio
+import contextvars
 from typing import Any
 
 from langchain_core.tools import tool
@@ -20,7 +21,9 @@ __category__ = "agent"
 
 from src.agent.sub_agent import REGULAR_TOOLS, run_sub_agent
 
-_recursion_depth: int = 0
+_recursion_depth: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "delegate_recursion_depth", default=0
+)
 _MAX_DEPTH: int = 3
 
 
@@ -56,11 +59,10 @@ def build_delegate_task(
         Returns:
             sub-agent 的执行结果文本。
         """
-        global _recursion_depth
-        if _recursion_depth >= _MAX_DEPTH:
+        if _recursion_depth.get() >= _MAX_DEPTH:
             return f"错误：委托层级已达上限（最多 {_MAX_DEPTH} 层）"
 
-        _recursion_depth += 1
+        token = _recursion_depth.set(_recursion_depth.get() + 1)
         try:
             # ── 收集工具传给 sub-agent ──
             sub_tools = list(REGULAR_TOOLS)
@@ -75,6 +77,6 @@ def build_delegate_task(
         except Exception as exc:
             return f"错误：子任务执行失败（{exc}）"
         finally:
-            _recursion_depth -= 1
+            _recursion_depth.reset(token)
 
     return delegate_task

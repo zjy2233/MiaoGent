@@ -27,8 +27,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger("agent_shell_http")
 
-_api: Api | None = None
-
 # per-thread lock for chat operations（防止同一 thread 并发请求）
 _chat_locks: dict[str, asyncio.Lock] = {}
 _chat_locks_mutex = asyncio.Lock()
@@ -41,16 +39,12 @@ async def _acquire_chat_lock(thread_id: str) -> asyncio.Lock:
         return _chat_locks[thread_id]
 
 
-def get_api() -> Api:
-    global _api
-    if _api is None:
-        _api = Api()
-    return _api
+def get_api(app: web.Application) -> Api:
+    return app["api"]
 
 
 async def init_agent(app: web.Application) -> None:
     """在服务器启动时异步初始化 agent（on_startup 回调）。"""
-    global _api
     root_dir: str = app.get("root_dir", str(_ROOT_DIR))
     try:
         import aiosqlite
@@ -78,7 +72,7 @@ async def init_agent(app: web.Application) -> None:
             memory_middleware=bundle.memory_middleware,
             memory_store=bundle.memory_store,
         )
-        _api = Api(
+        app["api"] = Api(
             root_dir=root_dir,
             agent=bundle.agent,
             memory_manager=memory_manager,
@@ -91,13 +85,15 @@ async def init_agent(app: web.Application) -> None:
         logger.info("Agent initialized with AsyncSqliteSaver (db=%s)", settings.db_path)
     except Exception as exc:
         logger.warning("Agent initialization failed (chat disabled): %s", exc)
-        _api = Api(root_dir=root_dir)
+        app["api"] = Api(root_dir=root_dir)
 
 
 async def close_agent(app: web.Application) -> None:
     # 退出时触发知识归并
     try:
-        await get_api().trigger_consolidation()
+        api = app.get("api")
+        if api:
+            await api.trigger_consolidation()
     except Exception as exc:
         logger.warning("Consolidation on exit failed: %s", exc)
 
@@ -145,18 +141,18 @@ async def health(request: Request) -> Response:
 
 
 async def get_sessions(request: Request) -> Response:
-    sessions = await get_api().get_sessions()
+    sessions = await get_api(request.app).get_sessions()
     return json_response(sessions)
 
 
 async def post_sessions(request: Request) -> Response:
-    result = await get_api().create_session()
+    result = await get_api(request.app).create_session()
     return json_response(result)
 
 
 async def delete_session(request: Request) -> Response:
     thread_id = request.match_info["thread_id"]
-    return json_response({"deleted": get_api().delete_session(thread_id)})
+    return json_response({"deleted": get_api(request.app).delete_session(thread_id)})
 
 
 async def delete_sessions_batch(request: Request) -> Response:
@@ -164,59 +160,59 @@ async def delete_sessions_batch(request: Request) -> Response:
     thread_ids = body.get("thread_ids", [])
     if not isinstance(thread_ids, list) or not thread_ids:
         return json_response({"error": "thread_ids 必须是非空数组"}, status=400)
-    return json_response(get_api().delete_sessions_batch(thread_ids))
+    return json_response(get_api(request.app).delete_sessions_batch(thread_ids))
 
 
 async def get_session_messages(request: Request) -> Response:
     thread_id = request.match_info["thread_id"]
     include_tool_calls = request.query.get("include_tool_calls", "true").lower() != "false"
-    messages = await get_api().get_messages(thread_id, include_tool_calls=include_tool_calls)
+    messages = await get_api(request.app).get_messages(thread_id, include_tool_calls=include_tool_calls)
     return json_response(messages)
 
 
 async def post_session_compress(request: Request) -> Response:
     thread_id = request.match_info["thread_id"]
-    result = await get_api().compress_session(thread_id)
+    result = await get_api(request.app).compress_session(thread_id)
     return json_response(result)
 
 
 async def get_settings(request: Request) -> Response:
-    return json_response(get_api().get_settings())
+    return json_response(get_api(request.app).get_settings())
 
 
 async def post_settings(request: Request) -> Response:
     body = await json_request(request)
-    get_api().save_settings(body)
+    get_api(request.app).save_settings(body)
     return json_response({"saved": True})
 
 
 async def get_soul(request: Request) -> Response:
-    return json_response(get_api().get_soul())
+    return json_response(get_api(request.app).get_soul())
 
 
 async def post_soul(request: Request) -> Response:
     body = await json_request(request)
-    get_api().save_soul(body)
+    get_api(request.app).save_soul(body)
     return json_response({"saved": True})
 
 
 async def get_profile(request: Request) -> Response:
-    return json_response(get_api().get_profile())
+    return json_response(get_api(request.app).get_profile())
 
 
 async def post_profile(request: Request) -> Response:
     body = await json_request(request)
-    get_api().save_profile(body)
+    get_api(request.app).save_profile(body)
     return json_response({"saved": True})
 
 
 async def get_tools(request: Request) -> Response:
-    return json_response(get_api().get_tools())
+    return json_response(get_api(request.app).get_tools())
 
 
 async def post_consolidate(request: Request) -> Response:
     """手动触发知识归并。"""
-    result = await get_api().trigger_consolidation()
+    result = await get_api(request.app).trigger_consolidation()
     return json_response(result)
 
 
@@ -224,12 +220,12 @@ async def post_consolidate(request: Request) -> Response:
 
 
 async def get_skills(request: Request) -> Response:
-    return json_response(get_api().get_skills())
+    return json_response(get_api(request.app).get_skills())
 
 
 async def get_skill_detail(request: Request) -> Response:
     name = request.match_info["name"]
-    detail = get_api().get_skill_detail(name)
+    detail = get_api(request.app).get_skill_detail(name)
     if detail is None:
         return json_response({"error": f"Skill '{name}' 不存在"}, status=404)
     return json_response(detail)
@@ -243,7 +239,7 @@ async def post_chat(request: Request) -> Response:
         return json_response({"error": "thread_id 和 message 不能为空"}, status=400)
     lock = await _acquire_chat_lock(thread_id)
     async with lock:
-        result = await get_api().chat(thread_id, message)
+        result = await get_api(request.app).chat(thread_id, message)
     return json_response(result)
 
 
@@ -273,7 +269,7 @@ async def post_chat_stream(request: Request) -> web.StreamResponse:
 
     lock = await _acquire_chat_lock(thread_id)
     async with lock:
-        chat_gen = get_api().chat_stream(thread_id, message)
+        chat_gen = get_api(request.app).chat_stream(thread_id, message)
         try:
             async for event in chat_gen:
                 line = f"event: {event['event']}\ndata: {json.dumps(event['data'], ensure_ascii=False)}\n\n"
@@ -300,7 +296,7 @@ async def post_resume(request: Request) -> Response:
         return json_response({"error": "thread_id 不能为空"}, status=400)
     lock = await _acquire_chat_lock(thread_id)
     async with lock:
-        result = await get_api().resume_chat(thread_id, approved)
+        result = await get_api(request.app).resume_chat(thread_id, approved)
     return json_response(result)
 
 
@@ -330,7 +326,7 @@ async def post_resume_stream(request: Request) -> web.StreamResponse:
 
     lock = await _acquire_chat_lock(thread_id)
     async with lock:
-        resume_gen = get_api().chat_stream(thread_id, "", resume=approved)
+        resume_gen = get_api(request.app).chat_stream(thread_id, "", resume=approved)
         try:
             async for event in resume_gen:
                 line = f"event: {event['event']}\ndata: {json.dumps(event['data'], ensure_ascii=False)}\n\n"
@@ -354,46 +350,46 @@ async def get_traces(request: Request) -> Response:
     status = request.query.get("status", "")
     limit = int(request.query.get("limit", "50"))
     offset = int(request.query.get("offset", "0"))
-    return json_response(get_api().get_traces(q=q, status=status, limit=limit, offset=offset))
+    return json_response(get_api(request.app).get_traces(q=q, status=status, limit=limit, offset=offset))
 
 
 async def get_trace_detail(request: Request) -> Response:
     trace_id = request.match_info["trace_id"]
-    return json_response(get_api().get_trace_detail(trace_id))
+    return json_response(get_api(request.app).get_trace_detail(trace_id))
 
 
 async def get_trace_spans(request: Request) -> Response:
     trace_id = request.match_info["trace_id"]
-    return json_response(get_api().get_trace_spans(trace_id))
+    return json_response(get_api(request.app).get_trace_spans(trace_id))
 
 
 async def get_trace_stats(request: Request) -> Response:
-    return json_response(get_api().get_trace_stats())
+    return json_response(get_api(request.app).get_trace_stats())
 
 
 async def get_trace_daily_stats(request: Request) -> Response:
-    return json_response(get_api().get_trace_daily_stats())
+    return json_response(get_api(request.app).get_trace_daily_stats())
 
 
 async def get_trace_cache_stats(request: Request) -> Response:
-    return json_response(get_api().get_trace_cache_stats())
+    return json_response(get_api(request.app).get_trace_cache_stats())
 
 
 async def get_traces_by_session(request: Request) -> Response:
     session_id = request.match_info["session_id"]
-    return json_response(get_api().get_traces_by_session(session_id))
+    return json_response(get_api(request.app).get_traces_by_session(session_id))
 
 
 async def get_trace_count(request: Request) -> Response:
     q = request.query.get("q", "")
     status = request.query.get("status", "")
-    return json_response({"count": get_api().get_trace_count(q=q, status=status)})
+    return json_response({"count": get_api(request.app).get_trace_count(q=q, status=status)})
 
 
 async def get_token_top_traces(request: Request) -> Response:
     days = int(request.query.get("days", "3"))
     limit = int(request.query.get("limit", "10"))
-    return json_response(get_api().get_token_top_traces(days=days, limit=limit))
+    return json_response(get_api(request.app).get_token_top_traces(days=days, limit=limit))
 
 
 # ── 路由注册 ──

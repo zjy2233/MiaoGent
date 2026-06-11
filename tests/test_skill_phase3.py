@@ -84,7 +84,7 @@ class TestDelegateTaskSkills:
 
         with patch.object(dt, "run_sub_agent", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = {"result": "ok", "agent_id": "abc"}
-            dt._recursion_depth = 0
+            dt._recursion_depth.set(0)
 
             result = await tool_fn.ainvoke({"task": "test", "timeout": 10})
 
@@ -103,7 +103,7 @@ class TestDelegateTaskSkills:
 
         with patch.object(dt, "run_sub_agent", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = {"result": "ok", "agent_id": "abc"}
-            dt._recursion_depth = 0
+            dt._recursion_depth.set(0)
 
             result = await tool_fn.ainvoke({"task": "test", "timeout": 10})
             assert result == "ok"
