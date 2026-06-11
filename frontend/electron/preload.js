@@ -128,6 +128,8 @@ const api = {
   getMessages: (threadId, opts) => {
     const params = new URLSearchParams();
     if (opts && opts.include_tool_calls === false) params.set('include_tool_calls', 'false');
+    if (opts && opts.limit) params.set('limit', opts.limit);
+    if (opts && opts.before_id) params.set('before_id', opts.before_id);
     const qs = params.toString();
     return fetch(`${BASE_URL}/api/sessions/${threadId}/messages${qs ? '?' + qs : ''}`).then((r) => r.json());
   },

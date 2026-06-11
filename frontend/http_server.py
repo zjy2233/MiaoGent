@@ -166,8 +166,12 @@ async def delete_sessions_batch(request: Request) -> Response:
 async def get_session_messages(request: Request) -> Response:
     thread_id = request.match_info["thread_id"]
     include_tool_calls = request.query.get("include_tool_calls", "true").lower() != "false"
-    messages = await get_api(request.app).get_messages(thread_id, include_tool_calls=include_tool_calls)
-    return json_response(messages)
+    limit = int(request.query.get("limit", "50"))
+    before_id = request.query.get("before_id") or None
+    result = await get_api(request.app).get_messages(
+        thread_id, include_tool_calls=include_tool_calls, limit=limit, before_id=before_id,
+    )
+    return json_response(result)
 
 
 async def post_session_compress(request: Request) -> Response:

@@ -787,30 +787,106 @@ function backToSessionList() {
 
 // ── 加载历史消息 ────────────────────────────────────────────────────────
 
+let _earliestMsgId = null;   // 当前已加载最早消息的 ID（分页游标）
+let _hasMoreMessages = false; // 是否还有更早的消息
+
 async function loadMessages(threadId) {
   try {
     // 历史模式：不展示工具调用内容，仅保留 human/ai 文本对话
-    const messages = await window.api.getMessages(threadId, { include_tool_calls: false });
+    const result = await window.api.getMessages(threadId, { include_tool_calls: false, limit: 50 });
+    const messages = result.messages || result; // 兼容旧格式（纯数组）
+    _hasMoreMessages = result.has_more === true;
+
     const container = document.getElementById('chat-messages');
     container.innerHTML = '';
 
     if (!messages || messages.length === 0) {
       container.innerHTML = '<div class="chat-empty">开始对话吧</div>';
       document.getElementById('chat-input').focus();
+      _earliestMsgId = null;
+      _hasMoreMessages = false;
       return;
     }
 
+    // 记录最早消息 ID 作为分页游标
+    _earliestMsgId = messages[0].id || null;
+
+    // 如果有更早的消息，顶部加"加载更早消息"按钮
+    if (_hasMoreMessages) {
+      _addLoadMoreBtn(container, threadId);
+    }
+
     for (const msg of messages) {
-      // 历史只展示 human/ai 对话，不展示工具调用、system 等中间消息
       if (msg.role !== 'human' && msg.role !== 'ai') continue;
       if (!msg.content || !msg.content.trim()) continue;
-      addMessageBubble(msg.role, msg.content);
+      addMessageBubble(msg.role, msg.content, msg.id);
     }
     scrollChatToBottom();
     document.getElementById('chat-input').focus();
   } catch (e) {
     console.error('Failed to load messages', e);
   }
+}
+
+function _addLoadMoreBtn(container, threadId) {
+  const btn = document.createElement('button');
+  btn.className = 'load-more-btn';
+  btn.textContent = '加载更早消息';
+  btn.addEventListener('click', async () => {
+    btn.textContent = '加载中...';
+    btn.disabled = true;
+    try {
+      const result = await window.api.getMessages(threadId, {
+        include_tool_calls: false,
+        limit: 50,
+        before_id: _earliestMsgId,
+      });
+      const older = result.messages || result;
+      _hasMoreMessages = result.has_more === true;
+
+      if (!older || older.length === 0) {
+        btn.remove();
+        return;
+      }
+
+      _earliestMsgId = older[0].id || null;
+
+      // 记录当前滚动高度，插入后保持位置
+      const scrollBefore = container.scrollHeight;
+
+      // 在 load-more 按钮之后插入更早消息
+      const fragment = document.createDocumentFragment();
+      for (const msg of older) {
+        if (msg.role !== 'human' && msg.role !== 'ai') continue;
+        if (!msg.content || !msg.content.trim()) continue;
+        const div = document.createElement('div');
+        div.className = 'chat-msg ' + escapeHtml(msg.role);
+        if (msg.role === 'ai' || msg.role === 'assistant') {
+          div.innerHTML = renderMarkdown(msg.content);
+        } else {
+          div.textContent = msg.content;
+        }
+        fragment.appendChild(div);
+      }
+      btn.insertAdjacentElement('afterend', fragment);
+
+      if (!_hasMoreMessages) {
+        btn.remove();
+      } else {
+        btn.textContent = '加载更早消息';
+        btn.disabled = false;
+      }
+
+      // 保持滚动位置
+      const scrollAfter = container.scrollHeight;
+      container.scrollTop += scrollAfter - scrollBefore;
+    } catch (e) {
+      btn.textContent = '加载失败，点击重试';
+      btn.disabled = false;
+      console.error('Failed to load more messages', e);
+    }
+  });
+  container.insertBefore(btn, container.firstChild);
 }
 
 // ── 流式发送消息（通过 CustomEvent）────────────────────────────────────
@@ -990,10 +1066,11 @@ function handleStreamEvent(event, data, aiBubble) {
 
 // ── 消息气泡 ────────────────────────────────────────────────────────────
 
-function addMessageBubble(role, content) {
+function addMessageBubble(role, content, msgId) {
   const container = document.getElementById('chat-messages');
   const div = document.createElement('div');
   div.className = 'chat-msg ' + escapeHtml(role);
+  if (msgId) div.dataset.msgId = msgId;
   if (role === 'ai' || role === 'assistant') {
     div.innerHTML = renderMarkdown(content);
   } else {

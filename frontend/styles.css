@@ -967,6 +967,31 @@ body.panel-dragging #panel-mode {
   font-size: 11px;
 }
 
+/* ── Load more button ── */
+.load-more-btn {
+  display: block;
+  width: 100%;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 12px;
+  cursor: pointer;
+  text-align: center;
+  transition: background 0.15s, color 0.15s;
+}
+.load-more-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.8);
+}
+.load-more-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+}
+
 .chat-msg.debug-context details summary:hover {
   color: rgba(162, 155, 254, 0.9);
 }

@@ -117,6 +117,8 @@
     getMessages: (tid, opts) => {
       const params = new URLSearchParams();
       if (opts && opts.include_tool_calls === false) params.set('include_tool_calls', 'false');
+      if (opts && opts.limit) params.set('limit', opts.limit);
+      if (opts && opts.before_id) params.set('before_id', opts.before_id);
       const qs = params.toString();
       return fetchJSON(`${BASE_URL}/api/sessions/${tid}/messages${qs ? '?' + qs : ''}`);
     },

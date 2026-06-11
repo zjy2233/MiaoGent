@@ -485,17 +485,48 @@ class Api:
         registry.add(tid)
         return {"thread_id": tid}
 
-    async def get_messages(self, thread_id: str, *, include_tool_calls: bool = True) -> list[dict[str, str]]:
+    async def get_messages(
+        self, thread_id: str, *,
+        include_tool_calls: bool = True,
+        limit: int = 50,
+        before_id: str | None = None,
+    ) -> dict:
+        """获取会话消息，支持分页。
+
+        Args:
+            thread_id: 会话 ID。
+            include_tool_calls: 是否包含工具调用内容。
+            limit: 返回消息数量上限（默认 50）。
+            before_id: 分页游标——返回此 ID 之前的 limit 条消息。
+
+        Returns:
+            {"messages": [...], "has_more": bool}
+        """
         if self._agent is None:
-            return []
+            return {"messages": [], "has_more": False}
         config = {"configurable": {"thread_id": thread_id}}
         try:
             state = await self._agent.aget_state(config)
         except Exception:
-            return []
+            return {"messages": [], "has_more": False}
         messages = list(state.values.get("messages", []) or [])
-        result: list[dict[str, str]] = []
-        for m in messages:
+
+        # ── 分页：找到 before_id 的位置 ──
+        cursor_idx = len(messages)
+        if before_id:
+            for i, m in enumerate(messages):
+                if getattr(m, "id", "") == before_id:
+                    cursor_idx = i
+                    break
+
+        # 截取 [max(0, cursor_idx-limit), cursor_idx) 区间
+        start_idx = max(0, cursor_idx - limit)
+        page = messages[start_idx:cursor_idx]
+        has_more = start_idx > 0
+
+        result: list[dict] = []
+        for m in page:
+            msg_id = getattr(m, "id", "")
             role = "human" if m.type == "human" else "ai" if m.type == "ai" else m.type
             parts = []
             content = m.content
@@ -511,14 +542,12 @@ class Api:
                                 inp = block.get("input", {})
                                 parts.append(f"[工具: {name}({json.dumps(inp, ensure_ascii=False)})]")
                         elif block_type == "tool_result":
-                            # 历史消息中不展示工具执行结果
                             if include_tool_calls:
                                 parts.append("[工具结果]")
                         else:
                             parts.append(str(block.get("text", "")))
             elif content:
                 parts.append(str(content))
-            # 如果消息有 tool_calls 属性（非 content list 方式），也添加
             if include_tool_calls:
                 tc = getattr(m, "tool_calls", None)
                 if tc:
@@ -528,11 +557,13 @@ class Api:
                         if tname:
                             parts.append(f"[工具调用: {tname}({json.dumps(targs, ensure_ascii=False)})]")
             text = "".join(parts)
-            # 历史模式：跳过纯工具消息（tool role），只保留 human/ai
             if not include_tool_calls and role in ("tool",):
                 continue
-            result.append({"role": role, "content": text} if text else {"role": role})
-        return result
+            entry: dict = {"id": msg_id, "role": role}
+            if text:
+                entry["content"] = text
+            result.append(entry)
+        return {"messages": result, "has_more": has_more}
 
     async def _cleanup_orphan_tool_calls(self, config: dict) -> None:
         """清理残留的孤立 tool_calls，确保消息序列合法。
