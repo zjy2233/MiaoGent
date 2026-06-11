@@ -340,9 +340,19 @@ class Api:
     ) -> None:
         self.root_dir = Path(root_dir) if root_dir else _project_root()
         self._env_path = self.root_dir / ".env"
-        self._sessions_path = get_data_path(".sessions.json")
-        self._soul_path = get_data_path("soul.json")
-        self._profile_path = get_data_path("profile.json")
+
+        # 测试隔离：root_dir 非项目根时，数据文件写入 root_dir/data/ 而非 ~/.miaogent/
+        _is_test = self.root_dir.resolve() != _project_root().resolve()
+        if _is_test:
+            _data_home = self.root_dir / "data"
+            _data_home.mkdir(parents=True, exist_ok=True)
+            self._sessions_path = _data_home / ".sessions.json"
+            self._soul_path = _data_home / "soul.json"
+            self._profile_path = _data_home / "profile.json"
+        else:
+            self._sessions_path = get_data_path(".sessions.json")
+            self._soul_path = get_data_path("soul.json")
+            self._profile_path = get_data_path("profile.json")
         self._tools_dir = self.root_dir / "src" / "tools"
         self._agent = agent
         self._memory_manager = memory_manager
