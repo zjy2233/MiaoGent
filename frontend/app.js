@@ -1004,6 +1004,7 @@ function showCommandConfirm(data, callback) {
   const overlay = document.getElementById('command-confirm-dialog');
   const cmdEl = document.getElementById('confirm-command');
   const reasonEl = document.getElementById('confirm-reason');
+  const countdownEl = document.getElementById('confirm-countdown');
   const okBtn = document.getElementById('cmd-confirm-ok');
   const cancelBtn = document.getElementById('cmd-confirm-cancel');
 
@@ -1012,14 +1013,35 @@ function showCommandConfirm(data, callback) {
 
   overlay.classList.remove('hidden');
 
+  let secondsLeft = 60;
+  let timer = null;
+  let resolved = false;
+
+  const updateCountdown = () => {
+    secondsLeft--;
+    if (secondsLeft <= 0) {
+      clearInterval(timer);
+      if (!resolved) { resolved = true; cleanup(); callback(false); }
+      return;
+    }
+    countdownEl.textContent = '\u5c06\u5728 ' + secondsLeft + ' \u79d2\u540e\u81ea\u52a8\u62d2\u7edd';
+    if (secondsLeft <= 10) countdownEl.className = 'confirm-countdown urgent';
+    else if (secondsLeft <= 30) countdownEl.className = 'confirm-countdown warning';
+  };
+
+  timer = setInterval(updateCountdown, 1000);
+
   const cleanup = () => {
+    clearInterval(timer);
     overlay.classList.add('hidden');
+    countdownEl.className = 'confirm-countdown';
+    countdownEl.textContent = '\u5c06\u5728 60 \u79d2\u540e\u81ea\u52a8\u62d2\u7edd';
     okBtn.removeEventListener('click', onOk);
     cancelBtn.removeEventListener('click', onCancel);
   };
 
-  const onOk = () => { cleanup(); callback(true); };
-  const onCancel = () => { cleanup(); callback(false); };
+  const onOk = () => { if (!resolved) { resolved = true; cleanup(); callback(true); } };
+  const onCancel = () => { if (!resolved) { resolved = true; cleanup(); callback(false); } };
 
   okBtn.addEventListener('click', onOk);
   cancelBtn.addEventListener('click', onCancel);

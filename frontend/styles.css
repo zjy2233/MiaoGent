@@ -1345,6 +1345,26 @@ body.panel-dragging #panel-mode {
   justify-content: center;
 }
 
+.confirm-countdown {
+  margin-top: 12px;
+  font-size: 11px;
+  color: rgba(74, 222, 128, 0.7);
+  text-align: center;
+  transition: color 0.3s;
+}
+.confirm-countdown.warning {
+  color: rgba(250, 204, 21, 0.8);
+}
+.confirm-countdown.urgent {
+  color: rgba(248, 113, 113, 0.9);
+  animation: countdown-pulse 1s ease-in-out infinite;
+}
+
+@keyframes countdown-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 .btn-danger {
   padding: 8px 20px;
   border: none;
