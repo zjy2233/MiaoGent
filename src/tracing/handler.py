@@ -83,9 +83,7 @@ class TraceCallbackHandler(BaseCallbackHandler):
             )
             self._trace_id = tracer._spans[span_id].trace_id
             self._run_id_to_span_id[run_id] = span_id
-        else:
-            span_id = tracer.start_span("agent_step")
-            self._run_id_to_span_id[run_id] = span_id
+        # agent_step spans intentionally removed — redundant with llm_call/tool_call
 
     def on_chain_end(
         self, outputs: dict[str, Any],
@@ -126,7 +124,14 @@ class TraceCallbackHandler(BaseCallbackHandler):
     ) -> Any:
         name = serialized.get("name", "") if isinstance(serialized, dict) else ""
         tracer = self._ensure_tracer()
-        span_id = tracer.start_span("llm_call", model=name or "unknown")
+        # Detect llm_role: 'sub' if inside delegate_task, else 'supervisor'
+        llm_role = "supervisor"
+        for sid in tracer._span_stack:
+            s = tracer._spans.get(sid)
+            if s and s.span_type == "delegate_task":
+                llm_role = "sub"
+                break
+        span_id = tracer.start_span("llm_call", model=name or "unknown", llm_role=llm_role)
         self._run_id_to_span_id[run_id] = span_id
         if not self._trace_id:
             self._trace_id = tracer._spans[span_id].trace_id

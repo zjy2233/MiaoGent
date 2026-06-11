@@ -2237,12 +2237,13 @@ body.panel-dragging #panel-mode {
   filter: brightness(1.3);
 }
 
-.trace-waterfall-bar.llm      { background: #3b82f6; }
+.trace-waterfall-bar.llm      { background: #3b82f6; }  /* 主 LLM */
+.trace-waterfall-bar.llm[data-role="sub"],
+.trace-waterfall-bar.llm.sub-llm { background: #6366f1; }  /* 子 LLM */
 .trace-waterfall-bar.tool     { background: #f59e0b; }
 .trace-waterfall-bar.session  { background: #8b5cf6; }
-.trace-waterfall-bar.step     { background: #10b981; }
+.trace-waterfall-bar.step     { background: #475569; }  /* 旧 agent_step，降级灰色 */
 .trace-waterfall-bar.delegate { background: #ec4899; }
-.trace-waterfall-bar.step { background: #10b981; }
 
 /* Waterfall delegate container row */
 .trace-waterfall-row.delegate-container {
@@ -2349,7 +2350,12 @@ body.panel-dragging #panel-mode {
 
 .trace-span-row.llm {
   background: #0f1a30;
-  border-left-color: #3b82f6;
+  border-left-color: #3b82f6;  /* 主 LLM */
+}
+.trace-span-row.llm[data-role="sub"],
+.trace-span-row.llm.sub-llm {
+  border-left-color: #6366f1;  /* 子 LLM */
+  background: #120f1f;
 }
 
 .trace-span-row.tool {

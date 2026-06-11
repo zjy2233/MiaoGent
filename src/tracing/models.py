@@ -22,7 +22,8 @@ class SpanData:
     trace_id: str = field(default_factory=_new_id)
     session_id: str = ""
     session_turn: int = 0
-    span_type: str = ""  # session_turn | llm_call | agent_step | tool_call | delegate_task
+    span_type: str = ""  # session_turn | llm_call | tool_call | delegate_task
+    llm_role: str = ""  # supervisor | sub （仅 llm_call 有效）
     model: str = ""
     input_tokens: int = 0
     output_tokens: int = 0
@@ -58,6 +59,7 @@ class SpanData:
             "session_id": self.session_id,
             "session_turn": self.session_turn,
             "span_type": self.span_type,
+            "llm_role": self.llm_role,
             "model": self.model,
             "input_tokens": self.input_tokens,
             "output_tokens": self.output_tokens,

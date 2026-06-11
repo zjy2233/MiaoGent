@@ -77,6 +77,7 @@ class TraceStore:
             "ALTER TABLE spans ADD COLUMN llm_input TEXT DEFAULT ''",
             "ALTER TABLE spans ADD COLUMN llm_output TEXT DEFAULT ''",
             "ALTER TABLE spans ADD COLUMN tool_output TEXT DEFAULT ''",
+            "ALTER TABLE spans ADD COLUMN llm_role TEXT DEFAULT ''",
         ]
         existing = {row[1] for row in conn.execute("PRAGMA table_info(spans)")}
         for sql in migrations:
@@ -91,7 +92,7 @@ class TraceStore:
     def write_span(self, span: SpanData) -> None:
         cols = [
             "span_id", "parent_span_id", "trace_id", "session_id", "session_turn",
-            "span_type", "model", "input_tokens", "output_tokens",
+            "span_type", "llm_role", "model", "input_tokens", "output_tokens",
             "cache_hit_tokens", "cache_miss_tokens", "tool_name",
             "tool_input", "status", "error_message", "started_at", "ended_at",
             "duration_ms", "user_message",
@@ -115,7 +116,7 @@ class TraceStore:
             try:
                 cols = [
                     "span_id", "parent_span_id", "trace_id", "session_id", "session_turn",
-                    "span_type", "model", "input_tokens", "output_tokens",
+                    "span_type", "llm_role", "model", "input_tokens", "output_tokens",
                     "cache_hit_tokens", "cache_miss_tokens", "tool_name",
                     "tool_input", "status", "error_message", "started_at", "ended_at",
                     "duration_ms", "user_message",

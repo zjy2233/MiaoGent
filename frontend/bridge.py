@@ -155,28 +155,18 @@ class TracingStreamHandler:
         self._tracer = tracer
         self._run_id_to_span_id: dict[str, str] = {}
         self._detect_delegate = detect_delegate
-        self._has_graph_chain = False  # 跳过第一个图级 chain
-        self._chain_stack: list[str] = []  # agent_step span 栈（嵌套 chain 专用）
+        # agent_step spans removed — chain events are no-ops
 
     def current_span_id(self) -> str | None:
         return self._tracer.current_span_id
 
-    _CHAIN_SKIP_NAMES: frozenset[str] = frozenset({
-        "LangGraph", "__start__", "__end__",
-    })
 
     def handle_event(self, event: dict) -> None:
         """Dispatch astream_events v2 event to the appropriate span handler."""
         kind = event.get("event", "")
         run_id = event.get("run_id")
 
-        if kind == "on_chain_start":
-            self._on_chain_start(run_id, event)
-        elif kind == "on_chain_end":
-            self._on_chain_end(run_id, event)
-        elif kind == "on_chain_error":
-            self._on_chain_error(run_id, event)
-        elif kind == "on_chat_model_start":
+        if kind == "on_chat_model_start":
             self._on_chat_model_start(run_id, event)
         elif kind == "on_chat_model_end":
             self._on_chat_model_end(run_id, event)
@@ -188,14 +178,10 @@ class TracingStreamHandler:
             self._on_tool_end(run_id, event)
         elif kind == "on_tool_error":
             self._on_tool_error(run_id, event)
-        elif kind == "on_chain_error":
-            self._on_chain_error(run_id, event)
+        # chain events intentionally ignored — no agent_step spans
 
     def flush(self) -> None:
         """End any remaining open spans."""
-        # 先关闭残留的 agent_step（逆序出栈）
-        while self._chain_stack:
-            self._tracer.end_span(self._chain_stack.pop())
         for sid in list(self._tracer._span_stack):
             self._tracer.end_span(sid)
 
@@ -206,12 +192,24 @@ class TracingStreamHandler:
         if finished:
             store.write_spans(finished)
 
+    # ── Private: llm_role detection ──
+
+    def _detect_llm_role(self) -> str:
+        """Return 'sub' if inside a delegate_task, else 'supervisor'."""
+        for sid in self._tracer._span_stack:
+            span = self._tracer._spans.get(sid)
+            if span and span.span_type == "delegate_task":
+                return "sub"
+        return "supervisor"
+
     # ── Private handlers ──
 
     def _on_chat_model_start(self, run_id: str, event: dict) -> None:
         name = event.get("name", "") or "chat_model"
         sid = self._tracer.start_span(
-            "llm_call", model=name,
+            "llm_call",
+            model=name,
+            llm_role=self._detect_llm_role(),
             llm_input=_serialize_llm_input(event["data"]["input"]),
         )
         self._run_id_to_span_id[run_id] = sid
@@ -294,31 +292,6 @@ class TracingStreamHandler:
                 from src.tracing.context import clear_trace_context
                 clear_trace_context()
 
-    def _on_chain_start(self, run_id: str, event: dict) -> None:
-        """Handle on_chain_start: create agent_step span for LangGraph node boundaries."""
-        if not self._has_graph_chain:
-            self._has_graph_chain = True
-            return
-        name = event.get("name", "")
-        if not name or name in self._CHAIN_SKIP_NAMES or name.startswith("__"):
-            return
-        sid = self._tracer.start_span("agent_step", model=name)
-        self._chain_stack.append(sid)  # 用独立栈跟踪，不依赖 run_id
-
-    def _on_chain_end(self, run_id: str, event: dict) -> None:
-        """Handle on_chain_end: close the innermost agent_step span."""
-        if self._chain_stack:
-            sid = self._chain_stack.pop()
-            self._tracer.end_span(sid)
-
-    def _on_chain_error(self, run_id: str, event: dict) -> None:
-        """Handle on_chain_error: close the innermost agent_step with error."""
-        if self._chain_stack:
-            sid = self._chain_stack.pop()
-            self._tracer.end_span(
-                sid, status="error",
-                error_message=str(event.get("data", {}).get("error", "")),
-            )
 
 
 class Api:

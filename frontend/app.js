@@ -2264,30 +2264,29 @@ async function showTraceDetail(traceId) {
         const typeClass = s.span_type === 'llm_call' ? 'llm'
           : s.span_type === 'tool_call' ? 'tool'
           : s.span_type === 'delegate_task' ? 'delegate'
-          : s.span_type === 'agent_step' ? 'step'
           : s.span_type === 'session_turn' ? 'session' : 'step';
 
         const icon = s.span_type === 'session_turn' ? '&#9654;'
           : s.span_type === 'llm_call' ? '&#9679;'
-          : s.span_type === 'agent_step' ? (s.model === 'tools' ? '&#9881;' : '&#9670;')
           : s.span_type === 'delegate_task' ? '&#10031;'
           : s.span_type === 'tool_call' ? '&#9670;' : '&#9654;';
 
         const isDelegate = s.span_type === 'delegate_task';
         const isAgentStep = s.span_type === 'agent_step';
-        const stepLabel = (s.model === 'tools') ? 'tools' : (s.model === 'agent' || s.model === 'model') ? 'agent' : (s.model || 'step');
 
-        const name = s.span_type === 'llm_call' ? (s.model || 'LLM')
+        const llmLabel = s.llm_role === 'sub' ? '子 LLM' : '主 LLM';
+        const name = s.span_type === 'llm_call' ? (llmLabel + (s.model ? ' · ' + s.model : ''))
           : s.span_type === 'tool_call' ? (s.tool_name || 'tool')
-          : s.span_type === 'delegate_task' ? ('🤖 ' + (s.tool_name || '子Agent'))
+          : s.span_type === 'delegate_task' ? ('子Agent · ' + (s.tool_name || ''))
           : s.span_type === 'session_turn' ? '会话'
-          : s.span_type === 'agent_step' ? stepLabel : s.span_type;
+          : s.span_type === 'agent_step' ? (s.model || 'agent_step') : s.span_type;
 
         const startTime = s.started_at ? new Date(s.started_at).toLocaleTimeString() : '';
         const dur = formatDuration(s.duration_ms || 0);
 
         const rowClass = isDelegate ? 'trace-waterfall-row delegate-container' : 'trace-waterfall-row';
-        const barClass = isDelegate ? 'trace-waterfall-bar delegate ' + typeClass : 'trace-waterfall-bar ' + typeClass;
+        const subLLMClass = (s.span_type === 'llm_call' && s.llm_role === 'sub') ? ' sub-llm' : '';
+        const barClass = (isDelegate ? 'trace-waterfall-bar delegate ' + typeClass : 'trace-waterfall-bar ' + typeClass) + subLLMClass;
 
         return `
         <div class="${rowClass}">
@@ -2316,11 +2315,11 @@ async function showTraceDetail(traceId) {
       const legend = `
         <div class="trace-waterfall-legend">
           <span><span class="trace-waterfall-legend-dot" style="background:#8b5cf6;"></span>会话</span>
-          <span><span class="trace-waterfall-legend-dot" style="background:#3b82f6;"></span>LLM</span>
-          <span><span class="trace-waterfall-legend-dot" style="background:#10b981;"></span>Agent 步骤</span>
+          <span><span class="trace-waterfall-legend-dot" style="background:#3b82f6;"></span>主 LLM</span>
+          <span><span class="trace-waterfall-legend-dot" style="background:#6366f1;"></span>子 LLM</span>
           <span><span class="trace-waterfall-legend-dot" style="background:#f59e0b;"></span>工具</span>
           <span><span class="trace-waterfall-legend-dot" style="background:#ec4899;"></span>子Agent</span>
-          <span style="margin-left:auto;color:#555;">缩进 = 嵌套深度</span>
+          <span style="margin-left:auto;color:#555;">缩进 = 父子嵌套</span>
         </div>`;
 
       return `
@@ -2340,20 +2339,20 @@ async function showTraceDetail(traceId) {
     function renderEnhancedTree(node, depth) {
       if (!node) return '';
       const isDelegate = node.span_type === 'delegate_task';
-      const isAgentStep = node.span_type === 'agent_step';
+      const llmRoleLabel = node.llm_role === 'sub' ? '子 LLM' : '主 LLM';
       const typeLabel = node.span_type === 'session_turn' ? '会话'
-        : node.span_type === 'llm_call' ? 'LLM'
-        : node.span_type === 'agent_step' ? ((node.model === 'tools') ? 'tools' : (node.model === 'agent' || node.model === 'model') ? 'agent' : 'Agent')
+        : node.span_type === 'llm_call' ? llmRoleLabel
         : node.span_type === 'delegate_task' ? '子Agent'
-        : node.span_type === 'tool_call' ? '工具' : node.span_type;
+        : node.span_type === 'tool_call' ? '工具'
+        : node.span_type === 'agent_step' ? (node.model || 'agent_step')
+        : node.span_type;
       const typeIcon = node.span_type === 'session_turn' ? '&#9654;'
-        : node.span_type === 'llm_call' ? '&#9679;'
-        : node.span_type === 'agent_step' ? ((node.model === 'tools') ? '&#9881;' : '&#9670;')
+        : node.span_type === 'llm_call' ? (node.llm_role === 'sub' ? '&#9675;' : '&#9679;')
         : node.span_type === 'delegate_task' ? '&#10031;'
         : node.span_type === 'tool_call' ? '&#9670;' : '&#9654;';
       const nameInfo = node.span_type === 'llm_call' ? (node.model || '')
         : node.span_type === 'tool_call' ? node.tool_name || ''
-        : node.span_type === 'delegate_task' ? ('🤖 ' + (node.tool_name || 'sub-agent'))
+        : node.span_type === 'delegate_task' ? (node.tool_name || '')
         : node.span_type === 'session_turn' ? '' : (node.model || '');
       const tokenInfo = (node.input_tokens || node.output_tokens)
         ? `${node.input_tokens || 0}+${node.output_tokens || 0} t` : '';
@@ -2369,8 +2368,9 @@ async function showTraceDetail(traceId) {
         : node.span_type === 'delegate_task' ? 'delegate'
         : 'step';
 
+      const subLLMAttr = (node.span_type === 'llm_call' && node.llm_role === 'sub') ? ' data-role="sub"' : '';
       let html = `
-        <div class="trace-span-row ${rowTypeClass} ${errorClass}" style="margin-left:${depth * 20}px;">
+        <div class="trace-span-row ${rowTypeClass}${node.llm_role === 'sub' ? ' sub-llm' : ''} ${errorClass}"${subLLMAttr} style="margin-left:${depth * 20}px;">
           <span class="trace-span-icon">${typeIcon}</span>
           <span class="trace-span-label">${typeLabel}${nameInfo ? ': ' + nameInfo : ''}</span>
           ${tokenInfo ? `<span style="font-size:10px;color:#888;white-space:nowrap;">${tokenInfo}</span>` : ''}
@@ -2448,7 +2448,11 @@ async function showTraceDetail(traceId) {
         <span class="trace-meta-label">Token 详情</span>
         <span class="trace-meta-value">输入 ${totalInput} + 输出 ${totalOutput} = ${detail.total_tokens || 0}</span>
         <span class="trace-meta-label">Span 统计</span>
-        <span class="trace-meta-value">${spans.length} 个（LLM: ${llmCount} / Tool: ${toolCount}${delegateCount > 0 ? ` / 子Agent: ${delegateCount}` : ''} / Error: ${errorCount}）</span>
+        <span class="trace-meta-value">${spans.length} 个（主LLM: ${
+          spans.filter(s => s.span_type === 'llm_call' && s.llm_role !== 'sub').length
+        } / 子LLM: ${
+          spans.filter(s => s.span_type === 'llm_call' && s.llm_role === 'sub').length
+        } / Tool: ${toolCount}${delegateCount > 0 ? ` / 子Agent: ${delegateCount}` : ''} / Error: ${errorCount}）</span>
       </div>
     `;
   } catch (e) {
