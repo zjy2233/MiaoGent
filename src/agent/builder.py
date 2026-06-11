@@ -138,139 +138,6 @@ class AgentState(TypedDict):
     summary: NotRequired[str]  # 历史摘要；空字符串/缺省 = 还没有压缩过
 
 
-class SummaryMiddleware(AgentMiddleware):
-    """(Deprecated: use MergedContextMiddleware) 在 LLM 调用前把 state.summary 注入为消息列表头部的 SystemMessage。"""
-
-    async def awrap_model_call(self, request, handler):
-        summary = request.state.get("summary", "") or ""
-        if summary:
-            summary_msg = SystemMessage(content=f"[对话历史摘要]\n{summary}")
-            request = request.override(
-                messages=[summary_msg, *request.messages]
-            )
-        return await handler(request)
-
-
-class ProfileMiddleware(AgentMiddleware):
-    """(Deprecated: use MergedContextMiddleware) 在 LLM 调用前把用户画像注入为消息列表头部的 SystemMessage。
-
-    如果传入了 ``profile_manager``，每次 LLM 调用前从磁盘重新加载，
-    确保用户通过设置面板手动修改的 ``profile.json`` 实时生效；
-    否则使用构造函数传入的快照（测试场景）。
-    """
-
-    def __init__(self, profile: dict, profile_manager: ProfileManager | None = None):
-        super().__init__()
-        self._profile_manager = profile_manager
-        self._init_profile = profile or {}
-        self.profile = profile or {}
-
-    async def awrap_model_call(self, request, handler):
-        if self._profile_manager:
-            self.profile = self._profile_manager.load()
-        profile_lines = []
-        for key, value in self.profile.items():
-            if key == "version" or key.endswith("_source"):
-                continue
-            profile_lines.append(f"{key}: {value}")
-
-        if not profile_lines:
-            return await handler(request)
-
-        profile_text = "[用户画像]\n" + "\n".join(profile_lines)
-        profile_msg = SystemMessage(content=profile_text)
-        request = request.override(
-            messages=[profile_msg, *request.messages]
-        )
-        return await handler(request)
-
-    def update_profile(self, new_facts: dict | None = None) -> None:
-        if not self._profile_manager:
-            if new_facts:
-                self.profile.update(new_facts)
-            return
-        if new_facts:
-            self._profile_manager.merge(new_facts)
-        self.profile = self._profile_manager.load()
-
-
-class MemoryMiddleware(AgentMiddleware):
-    """(Deprecated: use MergedContextMiddleware) 在 LLM 调用前把用户画像 + 结构化记忆合并注入为一条 SystemMessage。
-
-    画像（手工设定）标记为【用户设定】，记忆（自动提取）标记为【自动学习】，
-    合并为 ``[关于用户]`` 一个块，避免两条 SystemMessage 内容重复。
-
-    使用缓存避免同一轮 ReAct 循环中重复读取磁盘：
-    - ``_cached_text`` 在首次构建后缓存
-    - ``_cache_version`` 递增后触发刷新
-    - MemoryManager 在 ``compress_if_needed`` 完成后调用 ``invalidate_cache()``
-    """
-
-    def __init__(self, store: MemoryStore, profile_manager: ProfileManager | None = None):
-        super().__init__()
-        self.store = store
-        self._profile_manager = profile_manager
-        self._cached_text: str | None = None
-        self._cache_version: int = 0
-        self._last_build_version: int = -1
-
-    def invalidate_cache(self) -> None:
-        self._cache_version += 1
-
-    def _build_combined_text(self) -> str:
-        """合并画像 + 记忆为一段文本。"""
-        parts: list[str] = []
-
-        # 1. 用户画像（手工设定）
-        if self._profile_manager:
-            profile = self._profile_manager.load()
-            profile_lines: list[str] = []
-            for key, value in profile.items():
-                if key == "version" or key.endswith("_source"):
-                    continue
-                profile_lines.append(f"{key}: {value}")
-            if profile_lines:
-                parts.append("【用户设定】\n" + "\n".join(profile_lines))
-
-        # 2. 结构化记忆（自动提取）
-        memory_text = self.store.get_all_formatted()
-        if memory_text:
-            parts.append("【自动学习】\n" + memory_text)
-
-        return "\n\n".join(parts)
-
-    async def awrap_model_call(self, request, handler):
-        if self._last_build_version < self._cache_version or self._cached_text is None:
-            self._cached_text = self._build_combined_text()
-            self._last_build_version = self._cache_version
-
-        combined = self._cached_text
-        if not combined:
-            return await handler(request)
-        memory_msg = SystemMessage(content=f"[关于用户]\n{combined}")
-        request = request.override(
-            messages=[memory_msg, *request.messages]
-        )
-        return await handler(request)
-
-
-class TimeMiddleware(AgentMiddleware):
-    """(Deprecated: use MergedContextMiddleware) 在每次 LLM 调用前注入当前日期时间（会话级冻结，避免破坏前缀缓存）。"""
-
-    def __init__(self):
-        super().__init__()
-        self._session_time: str | None = None
-
-    async def awrap_model_call(self, request, handler):
-        if self._session_time is None:
-            self._session_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        time_msg = SystemMessage(content=f"[当前时间]\n{self._session_time}")
-        request = request.override(
-            messages=[time_msg, *request.messages]
-        )
-        return await handler(request)
-
-
 class MergedContextMiddleware(AgentMiddleware):
     """合并所有上下文注入为单一 SystemMessage，稳定内容在前、易变内容在后。
 
@@ -297,6 +164,10 @@ class MergedContextMiddleware(AgentMiddleware):
         self._cached_memory_text: str | None = None
         self._cache_version: int = 0
         self._last_build_version: int = -1
+
+    @property
+    def profile(self) -> dict:
+        return self._profile
 
     def invalidate_cache(self) -> None:
         self._cache_version += 1
