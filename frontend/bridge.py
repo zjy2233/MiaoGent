@@ -395,13 +395,14 @@ class Api:
             result.append({"role": role, "content": text} if text else {"role": role})
         return result
 
-    async def chat(self, thread_id: str, message: str) -> dict:
-        if self._agent is None:
-            return {"response": "", "error": "Agent 未就绪（请检查 LLM 配置）"}
-        from langchain_core.messages import HumanMessage
-        config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 100}
+    async def _cleanup_orphan_tool_calls(self, config: dict) -> None:
+        """清理残留的孤立 tool_calls，确保消息序列合法。
 
-        # 清理可能残留的孤立 tool_calls（详见 chat_stream 的注释）
+        找到最后一个有 tool_calls 但缺少对应 ToolMessage 的 AI 消息，
+        将其及其后所有消息一并移除。
+        """
+        if self._agent is None:
+            return
         try:
             state_snap = await self._agent.aget_state(config)
             msgs = list(state_snap.values.get("messages", []) or [])
@@ -410,11 +411,9 @@ class Api:
                 tc = getattr(msg, "tool_calls", None)
                 if not tc:
                     continue
-                # 检查紧跟在 AI 消息后面的是否是 ToolMessage
                 next_type = ""
                 if i + 1 < len(msgs):
                     next_type = getattr(msgs[i + 1], "type", "")
-
                 following_ids: set[str] = set()
                 for j in range(i + 1, len(msgs)):
                     tcid = getattr(msgs[j], "tool_call_id", None)
@@ -422,7 +421,6 @@ class Api:
                         following_ids.add(tcid)
                 missing = [t for t in tc if t.get("id") and t["id"] not in following_ids]
                 seq_broken = next_type not in ("", "tool")
-
                 if missing or seq_broken:
                     from langgraph.graph.message import RemoveMessage
                     await self._agent.aupdate_state(config, {
@@ -431,6 +429,14 @@ class Api:
                 break
         except Exception:
             pass
+
+    async def chat(self, thread_id: str, message: str) -> dict:
+        if self._agent is None:
+            return {"response": "", "error": "Agent 未就绪（请检查 LLM 配置）"}
+        from langchain_core.messages import HumanMessage
+        config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 100}
+
+        await self._cleanup_orphan_tool_calls(config)
         try:
             result = await self._agent.ainvoke(
                 {"messages": [HumanMessage(content=message)]},
@@ -654,45 +660,7 @@ class Api:
         except Exception:
             pass
 
-        # 清理上次中断残留的 tool_calls：找到最后一个有 tool_calls 但缺少对应
-        # ToolMessage 的 AI 消息，将其及其后所有消息一并移除。
-        #
-        # 不能简单地追加 ToolMessage 占位，因为中间可能已夹有来自失败请求的
-        # HumanMessage（tool_calls → 失败 checkpoint 写入 HumanMessage → 触发重试），
-        # 此时 ToolMessage 会追加在 HumanMessage 之后，序列仍然不合法。
-        try:
-            state_snap = await self._agent.aget_state(config)
-            msgs = list(state_snap.values.get("messages", []) or [])
-            for i in range(len(msgs) - 1, -1, -1):
-                msg = msgs[i]
-                tc = getattr(msg, "tool_calls", None)
-                if not tc:
-                    continue
-
-                # 检查紧跟在 AI 消息后面的是否是 ToolMessage
-                # 如果是 HumanMessage 或其他非 tool 消息说明序列已错乱
-                next_type = ""
-                if i + 1 < len(msgs):
-                    next_type = getattr(msgs[i + 1], "type", "")
-
-                # 收集该 AI 消息之后所有 ToolMessage 的 tool_call_id
-                following_ids: set[str] = set()
-                for j in range(i + 1, len(msgs)):
-                    tcid = getattr(msgs[j], "tool_call_id", None)
-                    if tcid:
-                        following_ids.add(tcid)
-
-                missing = [t for t in tc if t.get("id") and t["id"] not in following_ids]
-                seq_broken = next_type not in ("", "tool")  # 空=没有下一条, tool=正常
-
-                if missing or seq_broken:
-                    from langgraph.graph.message import RemoveMessage
-                    await self._agent.aupdate_state(config, {
-                        "messages": [RemoveMessage(id=m.id) for m in msgs[i:]],
-                    }, as_node="__start__")
-                break  # 只需检查最新的一个有 tool_calls 的消息
-        except Exception:
-            pass
+        await self._cleanup_orphan_tool_calls(config)
 
         # ── Tracing: 直接从事件流构建 spans（比 callback handler 更可靠）──
         tracer = None
