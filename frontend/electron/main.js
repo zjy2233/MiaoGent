@@ -144,9 +144,11 @@ function precreatePanelWindow() {
     frame: false, transparent: true, show: false,
     skipTaskbar: true,
     paintWhenInitiallyHidden: true,
+    backgroundColor: '#00000000',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true, nodeIntegration: false, sandbox: false,
+      backgroundThrottling: false,
     },
   });
   panelWindow.loadFile(path.join(__dirname, '..', 'index.html'), {

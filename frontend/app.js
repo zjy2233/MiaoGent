@@ -284,8 +284,10 @@ function initPanelMode(panelName) {
           if (typeof _refreshSettingsData === 'function') _refreshSettingsData();
           break;
         case 'chat':
+          // 记住当前子视图，避免回到 session 列表时刷新丢失聊天视图
+          const inChatView = !document.getElementById('chat-view').classList.contains('hidden');
           if (!_chatListenersBound) setupChatPanel();
-          else loadSessionList();
+          else if (!inChatView) loadSessionList();
           break;
         case 'tools':
           setupToolsPanel();
