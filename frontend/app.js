@@ -760,9 +760,12 @@ function openChat(threadId, isNew) {
   // 显示返回按钮
   document.getElementById('chat-back-btn').classList.remove('hidden');
 
-  // 清空旧消息
+  // 清空旧消息和工具卡片状态
   const container = document.getElementById('chat-messages');
   container.innerHTML = '';
+  _activeToolCards = {};
+  _earliestMsgId = null;
+  _hasMoreMessages = false;
 
   if (isNew) {
     container.innerHTML = '<div class="chat-empty">开始新对话</div>';
@@ -1007,6 +1010,8 @@ function showCommandConfirm(data, callback) {
   cancelBtn.addEventListener('click', onCancel);
 }
 
+let _activeToolCards = {};  // run_id → DOM element
+
 // ── SSE 事件处理 ───────────────────────────────────────────────────────
 
 function handleStreamEvent(event, data, aiBubble) {
@@ -1032,19 +1037,38 @@ function handleStreamEvent(event, data, aiBubble) {
     }
 
     case 'tool_start': {
-      const el = document.createElement('div');
-      el.className = 'chat-msg system';
-      el.textContent = '🔧 ' + data.name + '(' + data.input + ')';
-      container.insertBefore(el, aiBubble);
+      const card = _createToolCard(data);
+      _activeToolCards[data.run_id] = card;
+      container.insertBefore(card, aiBubble);
       scrollChatToBottom();
       return true;
     }
 
     case 'tool_end': {
-      const el = document.createElement('div');
-      el.className = 'chat-msg system';
-      el.textContent = '✅ ' + data.name + ' → ' + data.output;
-      container.insertBefore(el, aiBubble);
+      const card = _activeToolCards[data.run_id];
+      if (card) {
+        _updateToolCard(card, 'done', data.output);
+        delete _activeToolCards[data.run_id];
+      } else {
+        // 未找到对应卡片（可能在页面刷新后），创建完成卡片
+        const doneCard = _createToolCard(data);
+        _updateToolCard(doneCard, 'done', data.output);
+        container.insertBefore(doneCard, aiBubble);
+      }
+      scrollChatToBottom();
+      return true;
+    }
+
+    case 'tool_error': {
+      const card = _activeToolCards[data.run_id];
+      if (card) {
+        _updateToolCard(card, 'error', data.error);
+        delete _activeToolCards[data.run_id];
+      } else {
+        const errCard = _createToolCard(data);
+        _updateToolCard(errCard, 'error', data.error);
+        container.insertBefore(errCard, aiBubble);
+      }
       scrollChatToBottom();
       return true;
     }
@@ -1056,11 +1080,61 @@ function handleStreamEvent(event, data, aiBubble) {
       return true;
 
     case 'done':
-      // 正常结束，无需额外操作
       return true;
 
     default:
       return false;
+  }
+}
+
+// ── Tool card helpers ──
+
+function _createToolCard(data) {
+  const card = document.createElement('div');
+  card.className = 'tool-card loading';
+  card.innerHTML =
+    '<div class="tool-card-header">' +
+      '<span class="tool-card-spinner"></span>' +
+      '<span class="tool-card-name">' + escapeHtml(data.name) + '</span>' +
+      '<span class="tool-card-status loading">执行中...</span>' +
+      '<span class="tool-card-arrow">▸</span>' +
+    '</div>' +
+    '<div class="tool-card-body hidden">' +
+      '<div class="tool-card-section"><span class="tool-card-label">输入</span><pre>' + escapeHtml(data.input || '') + '</pre></div>' +
+    '</div>';
+  card.querySelector('.tool-card-header').addEventListener('click', function() {
+    card.classList.toggle('expanded');
+    const body = card.querySelector('.tool-card-body');
+    const arrow = card.querySelector('.tool-card-arrow');
+    body.classList.toggle('hidden');
+    arrow.textContent = body.classList.contains('hidden') ? '▸' : '▾';
+  });
+  return card;
+}
+
+function _updateToolCard(card, status, detail) {
+  card.classList.remove('loading');
+  const statusEl = card.querySelector('.tool-card-status');
+  const body = card.querySelector('.tool-card-body');
+
+  if (status === 'done') {
+    card.classList.add('done');
+    statusEl.className = 'tool-card-status done';
+    statusEl.textContent = '完成';
+    // Add output section
+    const outSection = document.createElement('div');
+    outSection.className = 'tool-card-section';
+    outSection.innerHTML = '<span class="tool-card-label">输出</span><pre>' + escapeHtml(detail || '') + '</pre>';
+    body.appendChild(outSection);
+  } else if (status === 'error') {
+    card.classList.add('error');
+    statusEl.className = 'tool-card-status error';
+    statusEl.textContent = '失败';
+    // Show error in body
+    body.innerHTML = '<div class="tool-card-section error"><span class="tool-card-label">错误</span><pre>' + escapeHtml(detail || '') + '</pre></div>';
+    card.classList.add('expanded');
+    body.classList.remove('hidden');
+    card.querySelector('.tool-card-arrow').textContent = '▾';
   }
 }
 

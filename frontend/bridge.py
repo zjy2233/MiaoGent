@@ -735,14 +735,14 @@ class Api:
                     elif kind == "on_tool_start":
                         name = event.get("name", "?")
                         inp = event["data"].get("input", {})
-                        yield {"event": "tool_start", "data": {"name": name, "input": _short_repr(inp)}}
+                        yield {"event": "tool_start", "data": {"name": name, "input": _short_repr(inp), "run_id": event.get("run_id", "")}}
                     elif kind == "on_tool_end":
                         name = event.get("name", "?")
                         out = event["data"].get("output")
-                        yield {"event": "tool_end", "data": {"name": name, "output": _short_repr(out)}}
+                        yield {"event": "tool_end", "data": {"name": name, "output": _short_repr(out), "run_id": event.get("run_id", "")}}
                     elif kind == "on_tool_error":
                         err = event["data"].get("error", "")
-                        yield {"event": "tool_error", "data": {"name": event.get("name", "?"), "error": str(err)}}
+                        yield {"event": "tool_error", "data": {"name": event.get("name", "?"), "error": str(err), "run_id": event.get("run_id", "")}}
             except Exception as exc:
                 yield {"event": "error", "data": {"error": str(exc)}}
                 return
@@ -865,14 +865,14 @@ class Api:
                 elif kind == "on_tool_start":
                     name = event.get("name", "?")
                     inp = event["data"].get("input", {})
-                    yield {"event": "tool_start", "data": {"name": name, "input": _short_repr(inp)}}
+                    yield {"event": "tool_start", "data": {"name": name, "input": _short_repr(inp), "run_id": event.get("run_id", "")}}
                 elif kind == "on_tool_end":
                     name = event.get("name", "?")
                     out = event["data"].get("output")
-                    yield {"event": "tool_end", "data": {"name": name, "output": _short_repr(out)}}
+                    yield {"event": "tool_end", "data": {"name": name, "output": _short_repr(out), "run_id": event.get("run_id", "")}}
                 elif kind == "on_tool_error":
                     err = event["data"].get("error", "")
-                    yield {"event": "tool_error", "data": {"name": event.get("name", "?"), "error": str(err)}}
+                    yield {"event": "tool_error", "data": {"name": event.get("name", "?"), "error": str(err), "run_id": event.get("run_id", "")}}
                 elif kind == "on_chain_end":
                     pass
         except Exception as exc:

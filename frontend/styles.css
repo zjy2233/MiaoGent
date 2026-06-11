@@ -1004,6 +1004,113 @@ body.panel-dragging #panel-mode {
   font-size: 12px;
 }
 
+/* ── Tool call cards ── */
+.tool-card {
+  align-self: stretch;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 10px;
+  margin: 2px 0;
+  overflow: hidden;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+.tool-card.loading {
+  border-left: 3px solid rgba(162, 155, 254, 0.5);
+  animation: tool-pulse 1.8s ease-in-out infinite;
+}
+.tool-card.done {
+  border-left: 3px solid rgba(74, 222, 128, 0.5);
+}
+.tool-card.error {
+  border-left: 3px solid rgba(248, 113, 113, 0.6);
+}
+.tool-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+}
+.tool-card-header:hover {
+  background: rgba(255,255,255,0.03);
+}
+.tool-card-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(162, 155, 254, 0.3);
+  border-top-color: rgba(162, 155, 254, 0.8);
+  border-radius: 50%;
+  animation: tool-spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+.tool-card.done .tool-card-spinner,
+.tool-card.error .tool-card-spinner {
+  display: none;
+}
+.tool-card-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.75);
+  flex: 1;
+}
+.tool-card-status {
+  font-size: 11px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+.tool-card-status.loading { color: rgba(162, 155, 254, 0.7); }
+.tool-card-status.done { color: rgba(74, 222, 128, 0.8); }
+.tool-card-status.error { color: rgba(248, 113, 113, 0.9); }
+.tool-card-arrow {
+  font-size: 10px;
+  color: rgba(255,255,255,0.3);
+  transition: transform 0.2s;
+  flex-shrink: 0;
+}
+.tool-card.expanded .tool-card-arrow {
+  transform: rotate(90deg);
+}
+.tool-card-body {
+  border-top: 1px solid rgba(255,255,255,0.06);
+  padding: 8px 12px;
+  background: rgba(0,0,0,0.15);
+}
+.tool-card-body.hidden { display: none; }
+.tool-card-section {
+  margin-bottom: 8px;
+}
+.tool-card-section:last-child { margin-bottom: 0; }
+.tool-card-section.error pre { color: rgba(248, 113, 113, 0.85); }
+.tool-card-label {
+  font-size: 10px;
+  color: rgba(255,255,255,0.35);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-bottom: 4px;
+  display: block;
+}
+.tool-card-section pre {
+  font-size: 11px;
+  font-family: Menlo, Monaco, Consolas, monospace;
+  color: rgba(255,255,255,0.55);
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.4;
+  margin: 0;
+  padding: 6px 8px;
+  background: rgba(0,0,0,0.2);
+  border-radius: 6px;
+}
+
+@keyframes tool-spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes tool-pulse {
+  0%, 100% { border-left-color: rgba(162, 155, 254, 0.3); }
+  50% { border-left-color: rgba(162, 155, 254, 0.7); }
+}
+
 .chat-loading {
   align-self: flex-start;
   color: rgba(255,255,255,0.4);
