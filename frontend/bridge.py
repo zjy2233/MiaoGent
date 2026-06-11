@@ -136,6 +136,145 @@ def _parse_tool_files(tools_dir: Path) -> list[dict[str, str]]:
     return results
 
 
+class TracingStreamHandler:
+    """Handle tracing span start/end/error events from astream_events v2.
+
+    Encapsulates the ~100-line span collection logic duplicated in
+    chat_stream's resume and normal modes.
+
+    Args:
+        tracer: Tracer instance.
+        detect_delegate: If True, detect delegate_task tool calls and
+            set/clear trace context. Set False for resume mode.
+    """
+
+    def __init__(self, tracer: Any, *, detect_delegate: bool = True) -> None:
+        self._tracer = tracer
+        self._run_id_to_span_id: dict[str, str] = {}
+        self._detect_delegate = detect_delegate
+
+    def current_span_id(self) -> str | None:
+        return self._tracer.current_span_id
+
+    def handle_event(self, event: dict) -> None:
+        """Dispatch astream_events v2 event to the appropriate span handler."""
+        kind = event.get("event", "")
+        run_id = event.get("run_id")
+
+        if kind == "on_chat_model_start":
+            self._on_chat_model_start(run_id, event)
+        elif kind == "on_chat_model_end":
+            self._on_chat_model_end(run_id, event)
+        elif kind == "on_chat_model_error":
+            self._on_chat_model_error(run_id, event)
+        elif kind == "on_tool_start":
+            self._on_tool_start(run_id, event)
+        elif kind == "on_tool_end":
+            self._on_tool_end(run_id, event)
+        elif kind == "on_tool_error":
+            self._on_tool_error(run_id, event)
+
+    def flush(self) -> None:
+        """End any remaining open spans."""
+        for sid in list(self._tracer._span_stack):
+            self._tracer.end_span(sid)
+
+    def write_to_store(self, store: Any) -> None:
+        """Flush and write collected spans to the trace store."""
+        self.flush()
+        finished = list(self._tracer._spans.values())
+        if finished:
+            store.write_spans(finished)
+
+    # ── Private handlers ──
+
+    def _on_chat_model_start(self, run_id: str, event: dict) -> None:
+        name = event.get("name", "") or "chat_model"
+        sid = self._tracer.start_span(
+            "llm_call", model=name,
+            llm_input=_serialize_llm_input(event["data"]["input"]),
+        )
+        self._run_id_to_span_id[run_id] = sid
+
+    def _on_chat_model_end(self, run_id: str, event: dict) -> None:
+        sid = self._run_id_to_span_id.pop(run_id, None)
+        if not sid:
+            return
+        resp = event.get("data", {}).get("output", {})
+        if isinstance(resp, dict):
+            usage = resp.get("usage_metadata") or {}
+            resp_meta = resp.get("response_metadata") or {}
+        else:
+            usage = getattr(resp, "usage_metadata", {})
+            resp_meta = getattr(resp, "response_metadata", {})
+        span = self._tracer._spans.get(sid)
+        if span:
+            span.llm_output = _serialize_llm_output(resp)
+            if isinstance(usage, dict) and usage:
+                span.input_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
+                span.output_tokens = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
+            token_usage = resp_meta.get("token_usage") or {}
+            details = token_usage.get("prompt_tokens_details") or {}
+            span.cache_hit_tokens = (
+                usage.get("prompt_cache_hit_tokens", 0)
+                or usage.get("cache_read_input_tokens", 0)
+                or token_usage.get("prompt_cache_hit_tokens", 0)
+                or details.get("cached_tokens", 0)
+            )
+            span.cache_miss_tokens = (
+                usage.get("prompt_cache_miss_tokens", 0)
+                or usage.get("cache_creation_input_tokens", 0)
+                or token_usage.get("prompt_cache_miss_tokens", 0)
+            )
+        self._tracer.end_span(sid)
+
+    def _on_chat_model_error(self, run_id: str, event: dict) -> None:
+        sid = self._run_id_to_span_id.pop(run_id, None)
+        if sid:
+            self._tracer.end_span(
+                sid, status="error",
+                error_message=str(event.get("data", {}).get("error", "")),
+            )
+
+    def _on_tool_start(self, run_id: str, event: dict) -> None:
+        name = event.get("name", "?")
+        inp = event["data"].get("input", "")
+        is_delegate = self._detect_delegate and name == "delegate_task"
+        span_type = "delegate_task" if is_delegate else "tool_call"
+        sid = self._tracer.start_span(
+            span_type, tool_name=name, tool_input=_short_repr(inp, 500),
+        )
+        self._run_id_to_span_id[run_id] = sid
+        if is_delegate:
+            from src.tracing.context import set_trace_context
+            set_trace_context(self._tracer, sid)
+
+    def _on_tool_end(self, run_id: str, event: dict) -> None:
+        sid = self._run_id_to_span_id.pop(run_id, None)
+        if sid:
+            span = self._tracer._spans.get(sid)
+            if span:
+                span.tool_output = _short_repr(event["data"].get("output"), 4096)
+            is_delegate = bool(span and span.span_type == "delegate_task")
+            self._tracer.end_span(sid)
+            if is_delegate:
+                from src.tracing.context import clear_trace_context
+                clear_trace_context()
+
+    def _on_tool_error(self, run_id: str, event: dict) -> None:
+        sid = self._run_id_to_span_id.pop(run_id, None)
+        if sid:
+            span = self._tracer._spans.get(sid)
+            is_delegate = bool(span and span.span_type == "delegate_task")
+            self._tracer.end_span(
+                sid, status="error",
+                error_message=str(event.get("data", {}).get("error", "")),
+            )
+            if is_delegate:
+                from src.tracing.context import clear_trace_context
+                clear_trace_context()
+
+
 class Api:
     """HTTP API 桥接层：提供会话管理、设置读写、Soul/Profile、工具枚举、聊天等功能。
 
@@ -539,14 +678,12 @@ class Api:
 
         if resume is not None:
             # ── Resume 模式：执行 Command(resume=approved) ──
-            # ── Tracing: 直接从事件流构建 spans ──
-            tracer = None
-            run_id_to_span_id: dict[str, str] = {}
+            handler = None
             if self._tracing_api is not None:
                 from src.tracing.tracer import Tracer
-                from src.tracing.context import set_trace_context, clear_trace_context
                 tracer = Tracer(session_id=thread_id, session_turn=0)
                 tracer.start_span("session_turn", user_message="(resume)")
+                handler = TracingStreamHandler(tracer, detect_delegate=False)
             try:
                 async for event in self._agent.astream_events(
                     Command(resume=resume),
@@ -554,64 +691,9 @@ class Api:
                     version="v2",
                 ):
                     kind = event.get("event", "")
-                    run_id = event.get("run_id")
                     # ── Tracing spans ──
-                    if tracer is not None:
-                        if kind == "on_chat_model_start":
-                            sid = tracer.start_span("llm_call", model=event.get("name", "") or "chat_model",
-                                                    llm_input=_serialize_llm_input(event["data"]["input"]))
-                            run_id_to_span_id[run_id] = sid
-                        elif kind == "on_chat_model_end":
-                            sid = run_id_to_span_id.pop(run_id, None)
-                            if sid:
-                                resp = event.get("data", {}).get("output", {})
-                                if isinstance(resp, dict):
-                                    usage = resp.get("usage_metadata") or {}
-                                    resp_meta = resp.get("response_metadata") or {}
-                                else:
-                                    usage = getattr(resp, "usage_metadata", {})
-                                    resp_meta = getattr(resp, "response_metadata", {})
-                                span = tracer._spans.get(sid)
-                                if span:
-                                    span.llm_output = _serialize_llm_output(resp)
-                                    if isinstance(usage, dict) and usage:
-                                        span.input_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
-                                        span.output_tokens = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
-                                    # Cache tokens: try Anthropic usage_metadata, then
-                                    # DeepSeek/OpenAI response_metadata.token_usage (direct keys)
-                                    token_usage = resp_meta.get("token_usage") or {}
-                                    details = token_usage.get("prompt_tokens_details") or {}
-                                    span.cache_hit_tokens = (
-                                        usage.get("prompt_cache_hit_tokens", 0)
-                                        or usage.get("cache_read_input_tokens", 0)
-                                        or token_usage.get("prompt_cache_hit_tokens", 0)
-                                        or details.get("cached_tokens", 0)
-                                    )
-                                    span.cache_miss_tokens = (
-                                        usage.get("prompt_cache_miss_tokens", 0)
-                                        or usage.get("cache_creation_input_tokens", 0)
-                                        or token_usage.get("prompt_cache_miss_tokens", 0)
-                                    )
-                                tracer.end_span(sid)
-                        elif kind == "on_chat_model_error":
-                            sid = run_id_to_span_id.pop(run_id, None)
-                            if sid:
-                                tracer.end_span(sid, status="error", error_message=str(event.get("data", {}).get("error", "")))
-                        elif kind == "on_tool_start":
-                            name = event.get("name", "?")
-                            inp = event["data"].get("input", "")
-                            sid = tracer.start_span("tool_call", tool_name=name, tool_input=_short_repr(inp, 500))
-                            run_id_to_span_id[run_id] = sid
-                        elif kind == "on_tool_end":
-                            sid = run_id_to_span_id.pop(run_id, None)
-                            if sid:
-                                if (span := tracer._spans.get(sid)):
-                                    span.tool_output = _short_repr(event["data"].get("output"), 4096)
-                                tracer.end_span(sid)
-                        elif kind == "on_tool_error":
-                            sid = run_id_to_span_id.pop(run_id, None)
-                            if sid:
-                                tracer.end_span(sid, status="error", error_message=str(event.get("data", {}).get("error", "")))
+                    if handler is not None:
+                        handler.handle_event(event)
                     if kind == "on_chat_model_stream":
                         chunk = event["data"].get("chunk")
                         if chunk is None:
@@ -634,13 +716,8 @@ class Api:
                 yield {"event": "error", "data": {"error": str(exc)}}
                 return
             finally:
-                # ── Tracing: 结束根 span 并写入 store ──
-                if tracer is not None and self._tracing_api is not None:
-                    for sid in list(tracer._span_stack):
-                        tracer.end_span(sid)
-                    finished = list(tracer._spans.values())
-                    if finished:
-                        self._tracing_api.store.write_spans(finished)
+                if handler is not None and self._tracing_api is not None:
+                    handler.write_to_store(self._tracing_api.store)
             yield {"event": "done", "data": {}}
             await self._update_turn_count(thread_id)
             if self._memory_manager:
@@ -663,11 +740,9 @@ class Api:
         await self._cleanup_orphan_tool_calls(config)
 
         # ── Tracing: 直接从事件流构建 spans（比 callback handler 更可靠）──
-        tracer = None
-        run_id_to_span_id: dict[str, str] = {}
+        handler = None
         if self._tracing_api is not None:
             from src.tracing.tracer import Tracer
-            from src.tracing.context import set_trace_context, clear_trace_context
             session_turn = 0
             try:
                 state = await self._agent.aget_state(config)
@@ -677,6 +752,7 @@ class Api:
                 pass
             tracer = Tracer(session_id=thread_id, session_turn=session_turn)
             tracer.start_span("session_turn", user_message=message)
+            handler = TracingStreamHandler(tracer, detect_delegate=True)
 
         # ── Debug 上下文（在 on_chat_model_start 事件中捕获，确保包含中间件注入的消息）──
         debug_enabled = self.get_settings().get("debug_enabled", False)
@@ -689,83 +765,9 @@ class Api:
                 version="v2",
             ):
                 kind = event.get("event", "")
-                run_id = event.get("run_id")
                 # ── Tracing spans ──
-                if tracer is not None:
-                    if kind == "on_chain_start" and not tracer.current_span_id:
-                        # only create root span if not already set
-                        tracer.start_span("session_turn", user_message=message)
-                    elif kind == "on_chat_model_start":
-                        name = event.get("name", "") or "chat_model"
-                        sid = tracer.start_span("llm_call", model=name,
-                                                llm_input=_serialize_llm_input(event["data"]["input"]))
-                        run_id_to_span_id[run_id] = sid
-                    elif kind == "on_chat_model_end":
-                        sid = run_id_to_span_id.pop(run_id, None)
-                        if sid:
-                            resp = event.get("data", {}).get("output", {})
-                            span = tracer._spans.get(sid)
-                            # Try both AIMessage.usage_metadata and dict access
-                            if isinstance(resp, dict):
-                                usage = resp.get("usage_metadata") or {}
-                                resp_meta = resp.get("response_metadata") or {}
-                            else:
-                                usage = getattr(resp, "usage_metadata", {})
-                                resp_meta = getattr(resp, "response_metadata", {})
-                            if span:
-                                span.llm_output = _serialize_llm_output(resp)
-                                if isinstance(usage, dict) and usage:
-                                    span.input_tokens = usage.get("input_tokens", 0) or usage.get("prompt_tokens", 0)
-                                    span.output_tokens = usage.get("output_tokens", 0) or usage.get("completion_tokens", 0)
-                                # Cache tokens: try Anthropic-format usage_metadata first,
-                                # then OpenAI-format response_metadata.token_usage.prompt_tokens_details
-                                token_usage = resp_meta.get("token_usage") or {}
-                                details = token_usage.get("prompt_tokens_details") or {}
-                                span.cache_hit_tokens = (
-                                    usage.get("prompt_cache_hit_tokens", 0)
-                                    or usage.get("cache_read_input_tokens", 0)
-                                    or token_usage.get("prompt_cache_hit_tokens", 0)
-                                    or details.get("cached_tokens", 0)
-                                )
-                                span.cache_miss_tokens = (
-                                    usage.get("prompt_cache_miss_tokens", 0)
-                                    or usage.get("cache_creation_input_tokens", 0)
-                                    or token_usage.get("prompt_cache_miss_tokens", 0)
-                                )
-                            tracer.end_span(sid)
-                    elif kind == "on_chat_model_error":
-                        sid = run_id_to_span_id.pop(run_id, None)
-                        if sid:
-                            tracer.end_span(sid, status="error",
-                                            error_message=str(event.get("data", {}).get("error", "")))
-                    elif kind == "on_tool_start":
-                        name = event.get("name", "?")
-                        inp = event["data"].get("input", "")
-                        is_delegate = name == "delegate_task"
-                        span_type = "delegate_task" if is_delegate else "tool_call"
-                        sid = tracer.start_span(span_type, tool_name=name,
-                                                tool_input=_short_repr(inp, 500))
-                        run_id_to_span_id[run_id] = sid
-                        if is_delegate:
-                            set_trace_context(tracer, sid)
-                    elif kind == "on_tool_end":
-                        sid = run_id_to_span_id.pop(run_id, None)
-                        if sid:
-                            if (span := tracer._spans.get(sid)):
-                                span.tool_output = _short_repr(event["data"].get("output"), 4096)
-                            is_delegate = span and span.span_type == "delegate_task"
-                            tracer.end_span(sid)
-                            if is_delegate:
-                                clear_trace_context()
-                    elif kind == "on_tool_error":
-                        sid = run_id_to_span_id.pop(run_id, None)
-                        if sid:
-                            is_delegate = (tracer._spans.get(sid) or None)
-                            is_delegate = is_delegate and is_delegate.span_type == "delegate_task"
-                            tracer.end_span(sid, status="error",
-                                            error_message=str(event.get("data", {}).get("error", "")))
-                            if is_delegate:
-                                clear_trace_context()
+                if handler is not None:
+                    handler.handle_event(event)
 
                 # ── 从 on_chat_model_start 捕获 LLM 实际接收到的完整输入 ──
                 if debug_enabled and not debug_emitted and kind == "on_chat_model_start":
@@ -846,13 +848,8 @@ class Api:
             yield {"event": "error", "data": {"error": str(exc)}}
             return
         finally:
-            # ── Tracing: 结束根 span 并写入 store ──
-            if tracer is not None and self._tracing_api is not None:
-                for sid in list(tracer._span_stack):
-                    tracer.end_span(sid)
-                finished = list(tracer._spans.values())
-                if finished:
-                    self._tracing_api.store.write_spans(finished)
+            if handler is not None and self._tracing_api is not None:
+                handler.write_to_store(self._tracing_api.store)
 
         # ── 检查是否有 interrupt（如 shell 确认）──
         try:
