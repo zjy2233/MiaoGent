@@ -41,6 +41,8 @@ class SpanData:
     tool_output: str = ""
 
     def end(self, status: str = "ok", error_message: str = "") -> None:
+        if self.ended_at:
+            return  # 幂等：避免 flush() 覆写正确的结束时间
         now = datetime.now(timezone.utc)
         self.ended_at = now.isoformat()
         self.status = status

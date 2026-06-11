@@ -44,8 +44,11 @@ class Tracer:
         span = self._spans.get(span_id)
         if span:
             span.end(status=status, error_message=error_message)
-        if self._span_stack and self._span_stack[-1] == span_id:
-            self._span_stack.pop()
+        # 始终从栈中移除（非栈顶时也会因并行工具执行而残留）
+        try:
+            self._span_stack.remove(span_id)
+        except ValueError:
+            pass  # 已被移除（flush 后的重复调用）
 
     @property
     def finished_spans(self) -> list[SpanData]:

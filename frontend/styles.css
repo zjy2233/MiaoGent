@@ -851,91 +851,113 @@ body.panel-dragging #panel-mode {
   border-bottom-right-radius: 4px;
   position: relative;
 }
-.chat-msg.human:hover .msg-edit-btn {
-  opacity: 1;
-}
 .chat-msg.human.editing {
-  background: rgba(255,255,255,0.08);
-  border: 1px solid rgba(255,255,255,0.15);
-  padding: 0;
+  align-self: stretch;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(162,155,254,0.3);
+  border-radius: 12px;
+  padding: 10px 12px;
   max-width: 100%;
+  overflow: visible;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
-/* ── Edit button on hover ── */
+/* ── Edit button (below the bubble) ── */
 .msg-edit-btn {
-  position: absolute;
-  top: 4px;
-  left: -28px;
-  width: 22px;
-  height: 22px;
-  border: none;
-  border-radius: 6px;
-  background: rgba(255,255,255,0.1);
-  color: rgba(255,255,255,0.5);
-  font-size: 11px;
-  cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.15s, background 0.15s;
+  align-self: flex-end;
   display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 5px;
+  padding: 3px 8px;
+  margin: -8px 0 4px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(255,255,255,0.35);
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.msg-edit-btn svg {
+  flex-shrink: 0;
 }
 .msg-edit-btn:hover {
-  background: rgba(255,255,255,0.25);
-  color: rgba(255,255,255,0.9);
+  color: rgba(162,155,254,0.85);
+  background: rgba(162,155,254,0.1);
 }
 
 /* ── Edit textarea ── */
 .msg-edit-textarea {
   width: 100%;
+  min-height: 60px;
   padding: 10px 12px;
-  border: none;
-  border-radius: 12px;
-  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 8px;
+  background: rgba(0,0,0,0.2);
   color: #fff;
   font-size: 13px;
   font-family: inherit;
-  line-height: 1.5;
+  line-height: 1.55;
   outline: none;
-  resize: vertical;
+  resize: none;
+  overflow-y: auto;
+  box-sizing: border-box;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
 .msg-edit-textarea:focus {
-  background: rgba(255,255,255,0.14);
-  box-shadow: 0 0 0 1px rgba(162, 155, 254, 0.4);
+  border-color: rgba(162,155,254,0.5);
+  box-shadow: 0 0 0 3px rgba(162,155,254,0.15);
+  background: rgba(0,0,0,0.3);
+}
+
+/* ── Edit warning ── */
+.msg-edit-warning {
+  font-size: 11px;
+  color: rgba(255,180,60,0.6);
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
 
 /* ── Edit actions ── */
 .msg-edit-actions {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   justify-content: flex-end;
-  padding: 6px 8px 8px;
 }
-.msg-edit-confirm,
-.msg-edit-cancel {
-  padding: 5px 14px;
+.msg-edit-cancel,
+.msg-edit-confirm {
+  padding: 6px 16px;
   border: none;
-  border-radius: 8px;
-  font-size: 11px;
+  border-radius: 7px;
+  font-size: 12px;
   font-weight: 500;
   cursor: pointer;
   font-family: inherit;
-  transition: transform 100ms, opacity 0.15s;
-}
-.msg-edit-confirm {
-  background: linear-gradient(135deg, #6c5ce7, #5a4bd1);
-  color: #fff;
-}
-.msg-edit-confirm:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-  transform: none;
+  transition: opacity 0.15s;
 }
 .msg-edit-cancel {
-  background: rgba(255,255,255,0.1);
-  color: rgba(255,255,255,0.6);
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.5);
 }
-.msg-edit-cancel:hover { background: rgba(255,255,255,0.18); }
+.msg-edit-cancel:hover {
+  background: rgba(255,255,255,0.14);
+  color: rgba(255,255,255,0.7);
+}
+.msg-edit-confirm {
+  background: #6c5ce7;
+  color: #fff;
+}
+.msg-edit-confirm:hover:not(:disabled) {
+  background: #7d6ff0;
+}
+.msg-edit-confirm:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
 
 .chat-msg.ai {
   align-self: flex-start;
@@ -1090,14 +1112,13 @@ body.panel-dragging #panel-mode {
   font-size: 12px;
 }
 
-/* ── Tool call cards ── */
+/* ── Tool call cards (streaming inline cards in chat) ── */
 .tool-card {
   align-self: stretch;
   background: rgba(255,255,255,0.04);
   border: 1px solid rgba(255,255,255,0.08);
   border-radius: 10px;
   margin: 2px 0;
-  overflow: hidden;
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 .tool-card.loading {
@@ -1159,10 +1180,17 @@ body.panel-dragging #panel-mode {
 }
 .tool-card-body {
   border-top: 1px solid rgba(255,255,255,0.06);
-  padding: 8px 12px;
+  padding: 0 12px;
   background: rgba(0,0,0,0.15);
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.25s ease, padding 0.25s ease;
 }
-.tool-card-body.hidden { display: none; }
+.tool-card-body:not(.hidden) {
+  max-height: 500px;
+  padding: 8px 12px;
+}
+.tool-card-body.hidden { max-height: 0; padding: 0 12px; }
 .tool-card-section {
   margin-bottom: 8px;
 }
@@ -2214,6 +2242,27 @@ body.panel-dragging #panel-mode {
 .trace-waterfall-bar.session  { background: #8b5cf6; }
 .trace-waterfall-bar.step     { background: #10b981; }
 .trace-waterfall-bar.delegate { background: #ec4899; }
+.trace-waterfall-bar.step { background: #10b981; }
+
+/* Waterfall delegate container row */
+.trace-waterfall-row.delegate-container {
+  background: #1a0d1a;
+  border-bottom: 1px solid #3d1f3d;
+}
+.trace-waterfall-row.delegate-container:hover {
+  background: #241424;
+}
+
+/* ── Delegate children wrapper in tree ── */
+.trace-delegate-children {
+  margin-left: 0;
+  border-left: 2px solid #ec4899;
+  padding: 4px 0 4px 8px;
+  background: #12121f;
+}
+.trace-delegate-children .trace-span-row {
+  margin-left: 0 !important; /* 子节点缩进已在 wrapper 中体现 */
+}
 
 /* Duration badge */
 .trace-waterfall-dur {
@@ -2316,6 +2365,29 @@ body.panel-dragging #panel-mode {
 .trace-span-row.delegate {
   background: #1f0a1e;
   border-left-color: #ec4899;
+  border-left-width: 3px;
+  font-weight: 600;
+}
+.trace-span-row.delegate .trace-span-label {
+  color: #f9a8d4;
+}
+.trace-span-row.delegate .trace-span-icon {
+  color: #ec4899;
+  font-size: 16px;
+}
+
+/* agent_step 链节点 */
+.trace-span-row.step {
+  background: #0a1f14;
+  border-left-color: #10b981;
+  border-left-width: 2px;
+  font-size: 11px;
+}
+.trace-span-row.step .trace-span-label {
+  color: #6ee7b7;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
 }
 
 .trace-span-row.has-error {
@@ -2521,4 +2593,12 @@ body.panel-dragging #panel-mode {
   font-family: Menlo, Monaco, Consolas, monospace;
   font-size: 10px;
   word-break: break-all;
+}
+
+/* ── Settings save feedback ── */
+#save-settings.saved-flash {
+  background: #10b981;
+  color: #fff;
+  border-color: #10b981;
+  transition: all 0.2s ease;
 }
