@@ -20,6 +20,7 @@ from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 
+from src.core.utils import content_str
 from src.store.memory_store import MemoryStore
 
 logger = logging.getLogger(__name__)
@@ -243,7 +244,7 @@ class KnowledgeConsolidator:
         )
 
         result = await self._llm.ainvoke(prompt)
-        text = _extract_text(result.content)
+        text = content_str(result.content)
 
         # 输出预算控制：截断过长输出
         if len(text) > MAX_OUTPUT_CHARS:
@@ -279,14 +280,6 @@ def _tokenize_topic(text: str) -> set[str]:
     # 提取英文单词（长度 >= 2，过滤单字母停用词）
     words = {w.lower() for w in re.findall(r'[a-zA-Z]+', text) if len(w) >= 2}
     return chars | words
-
-
-def _extract_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        return "".join(b.get("text", "") for b in content if isinstance(b, dict)).strip()
-    return str(content).strip()
 
 
 # ── 基于现有连接的数据库操作（供 consolidate() 单事务使用） ──────────

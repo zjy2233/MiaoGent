@@ -14,7 +14,6 @@ import asyncio
 import json
 import logging
 import re
-import textwrap
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
@@ -22,6 +21,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 from src.agent.rewoo_intent import should_use_rewoo
+from src.core.utils import content_str
 
 logger = logging.getLogger(__name__)
 
@@ -54,23 +54,6 @@ Rules:
 - If a tool returned an error, acknowledge it but work with available results
 - Use Chinese if the user's question was in Chinese, English otherwise
 """
-
-
-def _extract_text(response: Any) -> str:
-    """从 LLM 响应/消息中提取文本（共享工具函数）。"""
-    if response is None:
-        return ""
-    if hasattr(response, "content"):
-        content = response.content
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            return "".join(
-                b.get("text", "") if isinstance(b, dict) else str(b)
-                for b in content
-            )
-        return str(content)
-    return str(response)
 
 
 class ReWOOExecutor:
@@ -137,7 +120,7 @@ class ReWOOExecutor:
             logger.error("ReWOO plan LLM call failed: %s", exc)
             return []
 
-        content = _extract_text(response)
+        content = content_str(response.content) if response else ""
         plan = _parse_plan_json(content)
         if not plan:
             logger.warning("ReWOO plan parsing failed, raw response: %s", content[:200])
@@ -206,7 +189,7 @@ class ReWOOExecutor:
             # 降级：直接拼接工具结果
             return "\n\n".join(f"[{d}]\n{r}" for d, r in results.items())
 
-        return _extract_text(response)
+        return content_str(response.content) if response else ""
 
 
 def _parse_plan_json(text: str) -> list[dict[str, Any]]:
@@ -295,7 +278,7 @@ class ReWOORoutingMiddleware(AgentMiddleware):
         if len(human_msgs) != 1:
             return await handler(request)
 
-        query = _extract_text(human_msgs[0])
+        query = content_str(human_msgs[0].content)
 
         if not should_use_rewoo(query):
             return await handler(request)
@@ -325,12 +308,5 @@ def _read_injected_context(request: Any) -> str:
     messages = getattr(request, "messages", []) or []
     for msg in messages:
         if isinstance(msg, SystemMessage):
-            content = msg.content
-            if isinstance(content, str):
-                return content
-            if isinstance(content, list):
-                return "".join(
-                    b.get("text", "") if isinstance(b, dict) else str(b)
-                    for b in content
-                )
+            return content_str(msg.content)
     return ""

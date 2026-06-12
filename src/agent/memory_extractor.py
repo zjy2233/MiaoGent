@@ -18,6 +18,7 @@ from typing import Any
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage
 
+from src.core.utils import content_str
 from src.store.memory_store import MemoryStore
 
 # ── 提取提示词 ──────────────────────────────────────────────────────────
@@ -77,12 +78,12 @@ def _classify_gate(messages: list[BaseMessage]) -> bool:
     if len(human_msgs) < _MIN_HUMAN_MSGS:
         return False
 
-    total_chars = sum(len(_content_str(m)) for m in messages)
+    total_chars = sum(len(content_str(m.content)) for m in messages)
     if total_chars < _MIN_TOTAL_CHARS:
         return False
 
     # 检查是否只有简单问候
-    text = " ".join(_content_str(m).strip() for m in human_msgs)
+    text = " ".join(content_str(m.content).strip() for m in human_msgs)
     if any(p.search(text) for p in _SKIP_PATTERNS) and total_chars < 150:
         return False
 
@@ -180,7 +181,7 @@ class MemoryExtractor:
         )
 
         result = await self._llm.ainvoke(prompt)
-        text = _extract_text(result.content)
+        text = content_str(result.content)
         if not text:
             return None
 
@@ -206,28 +207,11 @@ class MemoryExtractor:
 # ── 辅助函数 ──────────────────────────────────────────────────────────────
 
 
-def _content_str(msg: BaseMessage) -> str:
-    c = msg.content
-    if isinstance(c, str):
-        return c
-    if isinstance(c, list):
-        return "".join(b.get("text", "") for b in c if isinstance(b, dict))
-    return str(c)
-
-
 def _format_messages(messages: list[BaseMessage], max_msgs: int = 20) -> str:
     """将消息格式化为 LLM 可读的文本（截断尾部 N 条）。"""
     recent = messages[-max_msgs:] if len(messages) > max_msgs else messages
-    lines = [f"[{m.type}] {_content_str(m)}" for m in recent]
+    lines = [f"[{m.type}] {content_str(m.content)}" for m in recent]
     return "\n".join(lines)
-
-
-def _extract_text(content: Any) -> str:
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        return "".join(b.get("text", "") for b in content if isinstance(b, dict)).strip()
-    return str(content).strip()
 
 
 def _extract_json(text: str) -> str | None:

@@ -14,6 +14,7 @@ from langchain_core.messages import BaseMessage
 from langgraph.graph.message import RemoveMessage
 
 from src.core.config import Settings
+from src.core.utils import content_str
 from src.store.soul import ProfileManager
 from src.store.memory_store import MemoryStore
 
@@ -132,7 +133,7 @@ class MemoryManager:
         summary = values.get("summary", "") or ""
         return MemoryStats(
             messages=len(messages),
-            chars=sum(len(_content_str(m)) for m in messages),
+            chars=sum(len(content_str(m.content)) for m in messages),
             summary_len=len(summary),
         )
 
@@ -248,12 +249,12 @@ class MemoryManager:
         max_chars = self.settings.max_message_chars
         if sum(1 for m in messages if m.type == "human") > max_turns:
             return True
-        if sum(len(_content_str(m)) for m in messages) > max_chars:
+        if sum(len(content_str(m.content)) for m in messages) > max_chars:
             return True
         return False
 
     async def _summarize_with_llm_async(self, old_messages: list[BaseMessage], prev_summary: str) -> str:
-        lines = [f"[{m.type}] {_content_str(m)}" for m in old_messages]
+        lines = [f"[{m.type}] {content_str(m.content)}" for m in old_messages]
         prompt = SUMMARIZE_PROMPT.format(
             prev_summary=prev_summary or "（无）",
             messages="\n".join(lines) if lines else "（无新增片段）",
@@ -306,15 +307,6 @@ class MemoryManager:
         except Exception as exc:
             logger.warning("_discover_profile_facts_async: LLM parse failed: %s", exc)
             return None
-
-
-def _content_str(msg: BaseMessage) -> str:
-    c = msg.content
-    if isinstance(c, str):
-        return c
-    if isinstance(c, list):
-        return "".join(b.get("text", "") for b in c if isinstance(b, dict))
-    return str(c)
 
 
 def _format_messages_for_discovery(messages: list[BaseMessage]) -> str:
