@@ -207,45 +207,32 @@ class ChatService:
 
         if resume is not None:
             # ── Resume 模式：执行 Command(resume=approved) ──
-            handler = None
-            if self._tracing_api is not None:
-                from src.tracing.tracer import Tracer
-                tracer = Tracer(session_id=thread_id, session_turn=0)
-                tracer.start_span("session_turn", user_message="(resume)")
-                handler = TracingStreamHandler(tracer, detect_delegate=False)
+            # 用 ainvoke 代替 astream_events：某些 LangGraph 版本下
+            # astream_events + Command(resume=...) 不发射 LLM 流式事件，
+            # 导致前端收不到回复。ainvoke 确保完整执行并拿到最终结果。
             try:
-                async for event in self._agent.astream_events(
+                result = await self._agent.ainvoke(
                     Command(resume=resume),
                     config=config,
-                    version="v2",
-                ):
-                    kind = event.get("event", "")
-                    if handler is not None:
-                        handler.handle_event(event)
-                    if kind == "on_chat_model_stream":
-                        chunk = event["data"].get("chunk")
-                        if chunk is None:
-                            continue
-                        text = self._extract_chunk_text(chunk)
-                        if text:
-                            yield {"event": "token", "data": {"text": text}}
-                    elif kind == "on_tool_start":
-                        name = event.get("name", "?")
-                        inp = event["data"].get("input", {})
-                        yield {"event": "tool_start", "data": {"name": name, "input": _short_repr(inp), "run_id": event.get("run_id", "")}}
-                    elif kind == "on_tool_end":
-                        name = event.get("name", "?")
-                        out = event["data"].get("output")
-                        yield {"event": "tool_end", "data": {"name": name, "output": _short_repr(out), "run_id": event.get("run_id", "")}}
-                    elif kind == "on_tool_error":
-                        err = event["data"].get("error", "")
-                        yield {"event": "tool_error", "data": {"name": event.get("name", "?"), "error": str(err), "run_id": event.get("run_id", "")}}
+                )
             except Exception as exc:
                 yield {"event": "error", "data": {"error": str(exc)}}
                 return
-            finally:
-                if handler is not None and self._tracing_api is not None:
-                    handler.write_to_store(self._tracing_api.store)
+
+            # 提取 LLM 最终回复流式传出
+            messages = result.get("messages", [])
+            if messages:
+                last_content = messages[-1].content
+                if isinstance(last_content, list):
+                    text_parts = []
+                    for block in last_content:
+                        if isinstance(block, dict) and block.get("type") == "text":
+                            text_parts.append(block.get("text", ""))
+                    last_content = "".join(text_parts)
+                if last_content:
+                    # 模拟流式输出：一次性吐出
+                    yield {"event": "token", "data": {"text": str(last_content)}}
+
             yield {"event": "done", "data": {}}
             if self._session_service:
                 await self._session_service._update_turn_count(thread_id)
