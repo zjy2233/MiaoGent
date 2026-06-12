@@ -51,12 +51,11 @@ class TracingAPI:
 
     @staticmethod
     def _reparent_tools_to_llm(spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """将 tool_call/delegate_task 重新关联到发起它们的 supervisor LLM。
+        """基于时间序的兼容层：将 tool_call/delegate_task 重新关联到发起它们的 supervisor LLM。
 
-        当前 Tracer 基于调用栈确定父子关系，但 LangChain ReAct 的回调顺序是:
-          LLM start → LLM end → Tool start → Tool end
-        导致所有工具都成为 session_turn 的直接子级（平级关系）。
-        此方法通过时间序分析，将工具正确挂到发起它们的 LLM 下。
+        TraceCallbackHandler 已在 on_tool_start 时通过 _last_supervisor_llm_id
+        正确设置 parent_span_id（新建 span 不再有此问题）。
+        此方法仅作为已有 trace 数据的兼容处理保留。
 
         同时解决并行工具执行时 toolA → toolB 的错误嵌套（当 toolB 在
         toolA 的 on_tool_end 之前触发 on_tool_start 时发生）。

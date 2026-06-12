@@ -19,10 +19,12 @@ class Tracer:
         span_type: str,
         *,
         trace_id: str | None = None,
+        parent_span_id: str | None = None,
         user_message: str = "",
         **kwargs: Any,
     ) -> str:
-        parent_span_id = self._span_stack[-1] if self._span_stack else None
+        if parent_span_id is None:
+            parent_span_id = self._span_stack[-1] if self._span_stack else None
         span_kwargs = dict(
             span_type=span_type,
             parent_span_id=parent_span_id,

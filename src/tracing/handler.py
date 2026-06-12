@@ -38,6 +38,7 @@ class TraceCallbackHandler(BaseCallbackHandler):
         self._run_id_to_span_id: dict[uuid.UUID, str] = {}
         self._has_root = False
         self._is_shared = tracer is not None  # 共享模式下不创建 root span
+        self._last_supervisor_llm_id: str | None = None
 
     def _ensure_tracer(self) -> Tracer:
         if self._tracer is None:
@@ -132,6 +133,8 @@ class TraceCallbackHandler(BaseCallbackHandler):
                 llm_role = "sub"
                 break
         span_id = tracer.start_span("llm_call", model=name or "unknown", llm_role=llm_role)
+        if llm_role == "supervisor":
+            self._last_supervisor_llm_id = span_id
         self._run_id_to_span_id[run_id] = span_id
         if not self._trace_id:
             self._trace_id = tracer._spans[span_id].trace_id
@@ -185,7 +188,24 @@ class TraceCallbackHandler(BaseCallbackHandler):
         tracer = self._ensure_tracer()
         name = (serialized.get("name", "") if isinstance(serialized, dict)
                 else getattr(serialized, "name", ""))
-        span_id = tracer.start_span("tool_call", tool_name=name or "unknown", tool_input=input_str[:500])
+        is_delegate = name == "delegate_task"
+        # 在 supervisor 级别将 tool 挂到发起它的 LLM 下而非栈顶（LLM 已在 on_llm_end 时出栈）
+        inside_delegate = any(
+            tracer._spans.get(sid) and tracer._spans[sid].span_type == "delegate_task"
+            for sid in tracer._span_stack
+        )
+        parent_override = None
+        if not inside_delegate and self._last_supervisor_llm_id:
+            parent_override = self._last_supervisor_llm_id
+        span_type = "delegate_task" if is_delegate else "tool_call"
+        span_id = tracer.start_span(
+            span_type, parent_span_id=parent_override,
+            tool_name=name or "unknown", tool_input=input_str[:500],
+        )
+        # 为 delegate_task 设置 trace context，使 sub-agent 共享 tracer
+        if is_delegate:
+            from src.tracing.context import set_trace_context
+            set_trace_context(tracer, span_id)
         self._run_id_to_span_id[run_id] = span_id
         if not self._trace_id:
             self._trace_id = tracer._spans[span_id].trace_id
@@ -199,6 +219,10 @@ class TraceCallbackHandler(BaseCallbackHandler):
             return
         span_id = self._run_id_to_span_id.pop(run_id, None)
         if span_id:
+            span = tracer._spans.get(span_id)
+            if span and span.span_type == "delegate_task":
+                from src.tracing.context import clear_trace_context
+                clear_trace_context()
             tracer.end_span(span_id)
             span = tracer._spans.get(span_id)
             if span:
@@ -214,6 +238,10 @@ class TraceCallbackHandler(BaseCallbackHandler):
             return
         span_id = self._run_id_to_span_id.pop(run_id, None)
         if span_id:
+            span = tracer._spans.get(span_id)
+            if span and span.span_type == "delegate_task":
+                from src.tracing.context import clear_trace_context
+                clear_trace_context()
             tracer.end_span(span_id, status="error", error_message=str(error))
             span = tracer._spans.get(span_id)
             if span:
