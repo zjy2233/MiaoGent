@@ -14,7 +14,8 @@ from pydantic import Field
 
 from src.agent.builder import build_agent
 from src.core.config import Settings
-from src.agent.memory import MemoryManager, MemoryStats, _content_str, _drop_orphans, _split_by_turns
+from src.core.utils import content_str
+from src.agent.memory import MemoryManager, MemoryStats, _drop_orphans, _split_by_turns
 
 
 class _StubChatModel(BaseChatModel):
@@ -73,11 +74,11 @@ def _ask(agent: Any, prompt: str, thread_id: str) -> list:
 
 class TestContentStr:
     def test_str_passthrough(self) -> None:
-        assert _content_str(HumanMessage(content="hi")) == "hi"
+        assert content_str(HumanMessage(content="hi").content) == "hi"
 
     def test_list_content(self) -> None:
         msg = AIMessage(content=[{"type": "text", "text": "abc"}])
-        assert _content_str(msg) == "abc"
+        assert content_str(msg.content) == "abc"
 
 
 class TestMemoryStats:
@@ -138,7 +139,7 @@ class TestIncrementalSummary:
             prompt = memory.SUMMARIZE_PROMPT.format(
                 prev_summary=prev_summary or "（无）",
                 messages="\n".join(
-                    f"[{m.type}] {_content_str(m)}" for m in old_messages
+                    f"[{m.type}] {content_str(m.content)}" for m in old_messages
                 ),
             )
             seen_prompts.append(prompt)
