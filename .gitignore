@@ -57,3 +57,4 @@ data_demo/
 
 # Electron 构建产物
 frontend/electron/dist/
+learnagent-*.json
