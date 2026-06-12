@@ -1031,6 +1031,7 @@ async function sendChatMessage() {
       showCommandConfirm(data, (approved) => {
         if (!window.api || !window.api.resumeChatStream) return;
         startedResume = true;
+        pendingInterrupt = null; // 清除中断标记，让 resume 的 done 能正常 cleanup
         window.api.resumeChatStream(chatThreadId, approved);
       });
       return;
@@ -1039,8 +1040,9 @@ async function sendChatMessage() {
     hasContent = handleStreamEvent(event, data, aiBubble) || hasContent;
 
     if (event === 'done') {
-      if (data.interrupted && pendingInterrupt) {
+      if (pendingInterrupt) {
         // 有中断等待用户确认——不清理，不设 isChatLoading=false
+        // 注意：synthetic done 事件 data.interrupted === undefined，不能依赖它判断
         return;
       }
       chatCleanup();
@@ -2388,27 +2390,6 @@ async function showTraceDetail(traceId) {
       `;
     }
 
-    // ── Collapse/expand toggles ──
-    function toggleTreeChildren(spanId) {
-      const container = document.getElementById(`tree-children-${spanId}`);
-      if (!container) return;
-      const hidden = container.style.display === 'none';
-      container.style.display = hidden ? '' : 'none';
-      const icon = document.querySelector(`[data-span-id="${spanId}"] .trace-collapse-icon`);
-      if (icon) icon.textContent = hidden ? '−' : '+';
-    }
-    function toggleWFChildren(nodeId) {
-      const container = document.getElementById(`wf-children-${nodeId}`);
-      if (!container) return;
-      const hidden = container.style.display === 'none';
-      container.style.display = hidden ? '' : 'none';
-      const row = container.previousElementSibling;
-      if (row) {
-        const icon = row.querySelector('.tw-toggle');
-        if (icon) icon.textContent = hidden ? '−' : '+';
-      }
-    }
-
     // Enhanced span tree with I/O
     function renderEnhancedTree(node, depth) {
       if (!node) return '';
@@ -2527,6 +2508,27 @@ async function showTraceDetail(traceId) {
   } catch (e) {
     console.error('Failed to load trace detail:', e);
     body.innerHTML = `<div style="text-align:center;padding:40px;"><span class="monitoring-link" onclick="setupMonitoringPanel()">&larr; 返回列表</span><div style="color:#f87171;margin-top:12px;">加载失败: ${e.message}</div></div>`;
+  }
+}
+
+// ── Collapse/expand toggles ──
+function toggleTreeChildren(spanId) {
+  const container = document.getElementById('tree-children-' + spanId);
+  if (!container) return;
+  const hidden = container.style.display === 'none';
+  container.style.display = hidden ? '' : 'none';
+  const icon = document.querySelector('[data-span-id="' + spanId + '"] .trace-collapse-icon');
+  if (icon) icon.textContent = hidden ? '−' : '+';
+}
+function toggleWFChildren(nodeId) {
+  const container = document.getElementById('wf-children-' + nodeId);
+  if (!container) return;
+  const hidden = container.style.display === 'none';
+  container.style.display = hidden ? '' : 'none';
+  const row = container.previousElementSibling;
+  if (row) {
+    const icon = row.querySelector('.tw-toggle');
+    if (icon) icon.textContent = hidden ? '−' : '+';
   }
 }
 
