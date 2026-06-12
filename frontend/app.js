@@ -1141,7 +1141,7 @@ function handleStreamEvent(event, data, aiBubble) {
 
     case 'tool_start': {
       const id = ++_toolCardId;
-      const card = _createToolCard(data);
+      const card = _createToolCard(data, id);
       card._toolName = data.name;
       card._toolId = id;
       _activeToolCards[id] = card;
@@ -1187,7 +1187,9 @@ function handleStreamEvent(event, data, aiBubble) {
         }
       }
       if (!found) {
-        const errCard = _createToolCard(data);
+        const errId = ++_toolCardId;
+        const errCard = _createToolCard(data, errId);
+        errCard._toolId = errId;
         _updateToolCard(errCard, 'error', data.error);
         container.insertBefore(errCard, aiBubble);
       }
@@ -1217,7 +1219,7 @@ function handleStreamEvent(event, data, aiBubble) {
 
 // ── Tool card helpers ──
 
-function _createToolCard(data) {
+function _createToolCard(data, cardId) {
   const card = document.createElement('div');
   card.className = 'tool-card loading';
   card.innerHTML =
@@ -1228,7 +1230,9 @@ function _createToolCard(data) {
       '<span class="tool-card-arrow">▸</span>' +
     '</div>' +
     '<div class="tool-card-body hidden">' +
-      '<div class="tool-card-section"><span class="tool-card-label">输入</span><pre>' + escapeHtml(data.input || '') + '</pre></div>' +
+      '<div class="tool-card-section"><span class="tool-card-label">输入</span>' +
+        _toolCopyBtn('tc-in-' + cardId) +
+        '<pre id="tc-in-' + cardId + '">' + escapeHtml(data.input || '') + '</pre></div>' +
     '</div>';
   card.querySelector('.tool-card-header').addEventListener('click', function() {
     card.classList.toggle('expanded');
@@ -1238,6 +1242,15 @@ function _createToolCard(data) {
     arrow.textContent = body.classList.contains('hidden') ? '▸' : '▾';
   });
   return card;
+}
+
+function _toolCopyBtn(targetId) {
+  return '<button class="trace-copy-btn" onclick="(function(){' +
+    "const el=document.getElementById('" + targetId + "');" +
+    'if(!el)return;navigator.clipboard.writeText(el.textContent);' +
+    "const btn=event.target;btn.textContent='已复制';btn.classList.add('copied');" +
+    "setTimeout(function(){btn.textContent='复制';btn.classList.remove('copied')},1500)" +
+    '})()">复制</button>';
 }
 
 function _updateToolCard(card, status, detail) {
@@ -1252,14 +1265,20 @@ function _updateToolCard(card, status, detail) {
     // Add output section
     const outSection = document.createElement('div');
     outSection.className = 'tool-card-section';
-    outSection.innerHTML = '<span class="tool-card-label">输出</span><pre>' + escapeHtml(detail || '') + '</pre>';
+    const outId = 'tc-out-' + (card._toolId || '0');
+    outSection.innerHTML = '<span class="tool-card-label">输出</span>' +
+      _toolCopyBtn(outId) +
+      '<pre id="' + outId + '">' + escapeHtml(detail || '') + '</pre>';
     body.appendChild(outSection);
   } else if (status === 'error') {
     card.classList.add('error');
     statusEl.className = 'tool-card-status error';
     statusEl.textContent = '失败';
     // Show error in body
-    body.innerHTML = '<div class="tool-card-section error"><span class="tool-card-label">错误</span><pre>' + escapeHtml(detail || '') + '</pre></div>';
+    const errId = 'tc-err-' + (card._toolId || '0');
+    body.innerHTML = '<div class="tool-card-section error"><span class="tool-card-label">错误</span>' +
+      _toolCopyBtn(errId) +
+      '<pre id="' + errId + '">' + escapeHtml(detail || '') + '</pre></div>';
     card.classList.add('expanded');
     body.classList.remove('hidden');
     card.querySelector('.tool-card-arrow').textContent = '▾';
@@ -2449,8 +2468,8 @@ async function showTraceDetail(traceId) {
         ` : ''}
         ${hasError ? `
           <div class="trace-error-block">
-            <div class="trace-error-header">Error</div>
-            <div class="trace-error-stack">${node.error_message}</div>
+            <div class="trace-error-header">Error ${copyBtn('err-msg-'+spanId)}</div>
+            <div class="trace-error-stack" id="err-msg-${spanId}">${node.error_message}</div>
           </div>
         ` : ''}
         ${hasChildren ? `<div class="trace-children" id="tree-children-${spanId}">${children.map(c => renderEnhancedTree(c, depth + 1)).join('')}</div>` : ''}
