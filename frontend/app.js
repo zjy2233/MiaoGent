@@ -11,6 +11,18 @@ let chatThreadId = null;      // 当前聊天会话 ID
 let isChatLoading = false;    // 聊天流式请求是否进行中
 let _detailViewCleanup = null; // 技能详情页的 cleanup
 
+// ── Span 数据缓存（避免 loadLatencyStats 重复请求） ──────────────────────
+const _spanCache = new Map();
+const SPAN_CACHE_TTL = 60000; // 1 分钟
+
+async function _getCachedSpans(traceId) {
+  const cached = _spanCache.get(traceId);
+  if (cached && Date.now() - cached.ts < SPAN_CACHE_TTL) return cached.data;
+  const spans = await window.api.getTraceSpans(traceId);
+  _spanCache.set(traceId, { data: spans, ts: Date.now() });
+  return spans;
+}
+
 // ── 启动 ──────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -1105,8 +1117,15 @@ function handleStreamEvent(event, data, aiBubble) {
     case 'token':
       if (!aiBubble._rawMarkdown) aiBubble._rawMarkdown = '';
       aiBubble._rawMarkdown += data.text;
-      aiBubble.innerHTML = renderMarkdown(aiBubble._rawMarkdown);
-      scrollChatToBottom();
+      // 使用 requestAnimationFrame 节流渲染，避免每个 token 都全量重绘
+      if (!aiBubble._renderPending) {
+        aiBubble._renderPending = true;
+        requestAnimationFrame(() => {
+          aiBubble._renderPending = false;
+          aiBubble.innerHTML = renderMarkdown(aiBubble._rawMarkdown);
+          scrollChatToBottom();
+        });
+      }
       return true;
 
     case 'context': {
@@ -1183,6 +1202,12 @@ function handleStreamEvent(event, data, aiBubble) {
       return true;
 
     case 'done':
+      // 确保最终渲染完成（清除可能的 pending rAF）
+      if (aiBubble._renderPending) {
+        aiBubble._renderPending = false;
+        aiBubble.innerHTML = renderMarkdown(aiBubble._rawMarkdown || '');
+        scrollChatToBottom();
+      }
       return true;
 
     default:
@@ -2016,7 +2041,7 @@ async function loadLatencyStats() {
     let toolCounts = {};
     for (const t of traces) {
       try {
-        const spans = await window.api.getTraceSpans(t.trace_id);
+        const spans = await _getCachedSpans(t.trace_id);
         spans.filter(s => s.span_type === 'tool_call' && s.tool_name).forEach(s => {
           if (!toolLatencies[s.tool_name]) { toolLatencies[s.tool_name] = 0; toolCounts[s.tool_name] = 0; }
           toolLatencies[s.tool_name] += s.duration_ms || 0;
