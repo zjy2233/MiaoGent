@@ -1276,9 +1276,9 @@ function _updateToolCard(card, status, detail) {
     card.classList.add('error');
     statusEl.className = 'tool-card-status error';
     statusEl.textContent = '失败';
-    // Show error in body
+    // Append error below existing input section
     const errId = 'tc-err-' + (card._toolId || '0');
-    body.innerHTML = '<div class="tool-card-section error"><span class="tool-card-label">错误</span>' +
+    body.innerHTML += '<div class="tool-card-section error"><span class="tool-card-label">错误</span>' +
       _toolCopyBtn(errId) +
       '<pre id="' + errId + '">' + escapeHtml(detail || '') + '</pre></div>';
     card.classList.add('expanded');
