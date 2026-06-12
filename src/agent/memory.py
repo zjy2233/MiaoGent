@@ -310,7 +310,7 @@ class MemoryManager:
 
 
 def _format_messages_for_discovery(messages: list[BaseMessage]) -> str:
-    lines = [f"[{m.type}] {_content_str(m)}" for m in messages]
+    lines = [f"[{m.type}] {content_str(m.content)}" for m in messages]
     return "\n".join(lines) if lines else "（无）"
 
 

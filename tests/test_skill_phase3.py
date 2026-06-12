@@ -58,29 +58,21 @@ class TestSubAgentBasics:
 
 
 class TestDelegateTaskSkills:
-    def test_build_delegate_task_accepts_skill_registry(self) -> None:
-        """build_delegate_task 接受 skill_registry 参数。"""
+    def test_build_delegate_task_accepts_llm_only(self) -> None:
+        """build_delegate_task 只接受 llm 参数。"""
         import inspect
         sig = inspect.signature(build_delegate_task)
         params = sig.parameters
-        assert "session_id" in params
-        assert "skill_registry" in params
+        assert "llm" in params
+        assert "session_id" not in params
+        assert "skill_registry" not in params
 
     @pytest.mark.asyncio
-    async def test_delegate_task_forwards_skill_tools(self) -> None:
-        """delegate_task 当前不传播 skill tools（skills 纯提示注入）。"""
+    async def test_delegate_task_uses_regular_tools(self) -> None:
+        """delegate_task 只使用 REGULAR_TOOLS（skills 是纯提示注入）。"""
         import src.tools.delegate_task as dt
 
-        mock_registry = MagicMock()
-        mock_registry.list_all.return_value = [
-            SkillDefinition(name="s1", description="s1"),
-        ]
-
-        tool_fn = build_delegate_task(
-            MagicMock(),
-            session_id="sess_1",
-            skill_registry=mock_registry,
-        )
+        tool_fn = build_delegate_task(MagicMock())
 
         with patch.object(dt, "run_sub_agent", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = {"result": "ok", "agent_id": "abc"}
