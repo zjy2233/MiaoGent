@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from src.core.miaogent_home import get_data_path
+from src.store.db import get_connection
 
 
 # ── 数据模型 ──────────────────────────────────────────────────────────────
@@ -98,8 +99,7 @@ class MemoryStore:
 
     def _ensure_db(self) -> None:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(self._db_path))
-        try:
+        with get_connection(self._db_path) as conn:
             conn.execute(
                 """CREATE TABLE IF NOT EXISTS working_memories (
                     id TEXT PRIMARY KEY,
@@ -139,8 +139,6 @@ class MemoryStore:
                 )"""
             )
             conn.commit()
-        finally:
-            conn.close()
 
     def _conn(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self._db_path))

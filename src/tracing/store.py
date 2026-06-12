@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 import threading
 from datetime import datetime, timedelta, timezone
@@ -11,6 +10,7 @@ from typing import Any
 
 from src.tracing.models import SpanData
 from src.core.miaogent_home import get_data_path
+from src.store.db import get_connection
 
 
 SCHEMA_SQL = """
@@ -50,8 +50,7 @@ class TraceStore:
 
     def _init_db(self) -> None:
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
-            try:
+            with get_connection(self._db_path) as conn:
                 conn.execute(SCHEMA_SQL)
                 conn.execute(INDEX_TRACE_SQL)
                 conn.execute(INDEX_SESSION_SQL)
@@ -68,8 +67,6 @@ class TraceStore:
                 conn.commit()
                 self._migrate_schema(conn)
                 conn.commit()
-            finally:
-                conn.close()
 
     def _migrate_schema(self, conn: sqlite3.Connection) -> None:
         """Add new columns if they don't exist (idempotent)."""
@@ -103,17 +100,13 @@ class TraceStore:
         values = [getattr(span, c) for c in cols]
         sql = f"INSERT OR REPLACE INTO spans ({names}) VALUES ({placeholders})"
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
-            try:
+            with get_connection(self._db_path) as conn:
                 conn.execute(sql, values)
                 conn.commit()
-            finally:
-                conn.close()
 
     def write_spans(self, spans: list[SpanData]) -> None:
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
-            try:
+            with get_connection(self._db_path) as conn:
                 cols = [
                     "span_id", "parent_span_id", "trace_id", "session_id", "session_turn",
                     "span_type", "llm_role", "model", "input_tokens", "output_tokens",
@@ -128,28 +121,22 @@ class TraceStore:
                 rows = [[getattr(s, c) for c in cols] for s in spans]
                 conn.executemany(sql, rows)
                 conn.commit()
-            finally:
-                conn.close()
 
     def get_trace_spans(self, trace_id: str) -> list[dict[str, Any]]:
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
-            try:
+            with get_connection(self._db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.execute(
                     "SELECT * FROM spans WHERE trace_id = ? ORDER BY started_at ASC",
                     (trace_id,),
                 )
                 return [self._row_to_dict(row) for row in cursor.fetchall()]
-            finally:
-                conn.close()
 
     def get_trace_list(
         self, q: str = "", status: str = "", limit: int = 50, offset: int = 0
     ) -> list[dict[str, Any]]:
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
-            try:
+            with get_connection(self._db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 conditions = ["span_type = 'session_turn'"]
                 params: list[Any] = []
@@ -185,13 +172,10 @@ class TraceStore:
                         r["input_tokens"] = inp
                         r["output_tokens"] = out
                 return rows
-            finally:
-                conn.close()
 
     def get_traces_by_session(self, session_id: str) -> list[dict[str, Any]]:
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
-            try:
+            with get_connection(self._db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.execute(
                     "SELECT * FROM spans WHERE span_type = 'session_turn' AND session_id = ? "
@@ -216,13 +200,10 @@ class TraceStore:
                         r["input_tokens"] = inp
                         r["output_tokens"] = out
                 return rows
-            finally:
-                conn.close()
 
     def get_stats(self) -> dict[str, Any]:
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
-            try:
+            with get_connection(self._db_path) as conn:
                 today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                 # session_turn count, avg duration, error count for today
                 row = conn.execute(
@@ -267,13 +248,10 @@ class TraceStore:
                     "error_rate": round(row[2] / row[0] * 100, 1) if row[0] > 0 else 0,
                     "yesterday_tokens": int(row_y[0]) if row_y[0] else 0,
                 }
-            finally:
-                conn.close()
 
     def get_daily_stats(self) -> list[dict[str, Any]]:
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
-            try:
+            with get_connection(self._db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.execute(
                     "SELECT d.day, d.count, "
@@ -291,23 +269,17 @@ class TraceStore:
                     "ORDER BY d.day DESC LIMIT 14"
                 )
                 return [self._row_to_dict(row) for row in cursor.fetchall()]
-            finally:
-                conn.close()
 
     def count(self) -> int:
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
-            try:
+            with get_connection(self._db_path) as conn:
                 row = conn.execute("SELECT COUNT(*) FROM spans").fetchone()
                 return row[0] if row else 0
-            finally:
-                conn.close()
 
     def get_trace_count(self, q: str = "", status: str = "") -> int:
         """Return total count of session_turn traces matching filters."""
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
-            try:
+            with get_connection(self._db_path) as conn:
                 conditions = ["span_type = 'session_turn'"]
                 params: list[Any] = []
                 if q:
@@ -321,14 +293,11 @@ class TraceStore:
                     f"SELECT COUNT(*) FROM spans WHERE {where}", params
                 ).fetchone()
                 return row[0] if row else 0
-            finally:
-                conn.close()
 
     def get_token_top_traces(self, days: int = 3, limit: int = 10) -> list[dict[str, Any]]:
         """Return top N traces by total tokens in last N days, sorted by tokens DESC."""
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
-            try:
+            with get_connection(self._db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
                 total_expr = (
@@ -348,19 +317,14 @@ class TraceStore:
                     (cutoff, limit),
                 ).fetchall()
                 return [self._row_to_dict(row) for row in rows]
-            finally:
-                conn.close()
 
     def cleanup(self, retention_days: int = 30) -> int:
         cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
-            try:
+            with get_connection(self._db_path) as conn:
                 cursor = conn.execute(
                     "DELETE FROM spans WHERE started_at < ?", (cutoff,)
                 )
                 deleted = cursor.rowcount
                 conn.commit()
                 return deleted
-            finally:
-                conn.close()

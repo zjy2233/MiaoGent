@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from src.core.miaogent_home import get_data_path
+from src.store.db import get_connection
 
 MAX_RECORDS = 10_000
 SCHEMA_SQL = """
@@ -65,18 +66,14 @@ class AuditLogger:
 
     def _init_db(self) -> None:
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
-            try:
+            with get_connection(self._db_path) as conn:
                 conn.execute(SCHEMA_SQL)
                 conn.execute(INDEX_SQL)
                 conn.commit()
-            finally:
-                conn.close()
 
     def log(self, record: AuditRecord) -> None:
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
-            try:
+            with get_connection(self._db_path) as conn:
                 conn.execute(
                     INSERT_SQL,
                     (
@@ -91,8 +88,6 @@ class AuditLogger:
                 )
                 conn.commit()
                 self._maybe_cleanup(conn)
-            finally:
-                conn.close()
 
     def log_simple(
         self,
@@ -116,25 +111,19 @@ class AuditLogger:
 
     def query(self, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
-            try:
+            with get_connection(self._db_path) as conn:
                 conn.row_factory = sqlite3.Row
                 cursor = conn.execute(
                     "SELECT * FROM audit_log ORDER BY id DESC LIMIT ? OFFSET ?",
                     (limit, offset),
                 )
                 return [dict(row) for row in cursor.fetchall()]
-            finally:
-                conn.close()
 
     def count(self) -> int:
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
-            try:
+            with get_connection(self._db_path) as conn:
                 row = conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()
                 return row[0] if row else 0
-            finally:
-                conn.close()
 
     def _maybe_cleanup(self, conn: sqlite3.Connection) -> None:
         row = conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()
@@ -146,9 +135,6 @@ class AuditLogger:
 
     def clear(self) -> None:
         with self._lock:
-            conn = sqlite3.connect(self._db_path)
-            try:
+            with get_connection(self._db_path) as conn:
                 conn.execute("DELETE FROM audit_log")
                 conn.commit()
-            finally:
-                conn.close()
