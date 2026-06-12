@@ -2254,15 +2254,50 @@ body.panel-dragging #panel-mode {
   background: #241424;
 }
 
-/* ── Delegate children wrapper in tree ── */
-.trace-delegate-children {
-  margin-left: 0;
-  border-left: 2px solid #ec4899;
-  padding: 4px 0 4px 8px;
-  background: #12121f;
+/* ── Tree collapse/expand ── */
+.trace-children {
+  margin-left: 20px;
 }
-.trace-delegate-children .trace-span-row {
-  margin-left: 0 !important; /* 子节点缩进已在 wrapper 中体现 */
+
+.trace-collapse-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  color: #888;
+  border-radius: 3px;
+  flex-shrink: 0;
+  user-select: none;
+}
+.trace-collapse-icon:hover {
+  background: #2e2e48;
+  color: #ddd;
+}
+
+/* ── Waterfall collapse/expand ── */
+.tw-children { }
+
+.tw-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+  color: #888;
+  border-radius: 3px;
+  flex-shrink: 0;
+  user-select: none;
+}
+.tw-toggle:hover {
+  background: #2e2e48;
+  color: #ddd;
 }
 
 /* Duration badge */

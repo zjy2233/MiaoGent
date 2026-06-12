@@ -2192,19 +2192,10 @@ async function showTraceDetail(traceId) {
     // Waterfall timeline (enhanced: nesting, time axis, grid, tooltips)
     function renderWaterfall(spans) {
       if (!spans || spans.length === 0) return '';
+      if (!root) return '';
 
-      // 1. Flatten tree with depth for nesting display
-      const flatSpans = [];
-      function collectFlat(node, depth) {
-        if (!node) return;
-        flatSpans.push({ ...node, _depth: depth });
-        (node.children || []).forEach(c => collectFlat(c, depth + 1));
-      }
-      collectFlat(root, 0);
-      if (flatSpans.length === 0) return '';
-
-      // 2. Compute time range
-      const timestamps = flatSpans.map(s => {
+      // 1. Compute time range (from flat spans list)
+      const timestamps = spans.map(s => {
         const ts = s.started_at ? new Date(s.started_at).getTime() : 0;
         return { ts, dur: s.duration_ms || 0 };
       }).filter(t => t.ts > 0);
@@ -2213,7 +2204,7 @@ async function showTraceDetail(traceId) {
       const latest = Math.max(...timestamps.map(t => t.ts + t.dur));
       const totalRange = latest - earliest || 1;
 
-      // 3. Auto-calculate nice tick interval
+      // 2. Auto-calculate nice tick interval
       const totalMs = totalRange;
       let tickInterval;
       if (totalMs <= 500) tickInterval = 100;
@@ -2231,66 +2222,76 @@ async function showTraceDetail(traceId) {
         ticks.pop();
       }
 
-      // 4. Label width based on max depth (base 120 + 16px per indent level)
-      const maxDepth = Math.max(...flatSpans.map(s => s._depth || 0), 0);
+      // 3. Compute max depth for label width (base 120 + 16px per indent level)
+      let maxDepth = 0;
+      (function calcDepth(n, d) {
+        if (!n) return;
+        maxDepth = Math.max(maxDepth, d);
+        (n.children || []).forEach(c => calcDepth(c, d + 1));
+      })(root, 0);
       const labelWidth = Math.min(120 + maxDepth * 16, 280);
 
-      // 5. Tick formatter
+      // 4. Tick formatter
       function formatTick(ms) {
         if (ms >= 1000) return (ms / 1000).toFixed(1).replace(/\.0$/, '') + 's';
         return ms + 'ms';
       }
 
-      // 6. Tick HTML for ruler
+      // 5. Tick HTML for ruler
       const tickHtml = ticks.map(t => {
         const pct = (t / totalRange) * 100;
         return `<span class="trace-waterfall-tick" style="left:${pct}%;">${formatTick(t)}</span>`;
       }).join('');
 
-      // 7. Grid lines (identical for each track row, pre-computed)
+      // 6. Grid lines (identical for each track row, pre-computed)
       const gridHtml = ticks.map(t => {
         const pct = (t / totalRange) * 100;
         return `<div class="trace-waterfall-grid" style="left:${pct}%;"></div>`;
       }).join('');
 
-      // 8. Render rows
-      const rows = flatSpans.map(s => {
-        const ts = s.started_at ? new Date(s.started_at).getTime() : 0;
+      // 7. Recursive node renderer (nested structure with collapse support)
+      function renderWFNode(node, depth) {
+        if (!node) return '';
+        const children = node.children || [];
+        const hasChildren = children.length > 0;
+        const canCollapse = hasChildren && node.span_type !== 'session_turn';
+        const spanId = node.span_id || 'wf-' + Math.random().toString(36).slice(2, 8);
+
+        const ts = node.started_at ? new Date(node.started_at).getTime() : 0;
         if (!ts) return '';
         const offset = (ts - earliest) / totalRange * 100;
-        const width = Math.max((s.duration_ms || 0) / totalRange * 100, 0.4);
-        const depth = s._depth || 0;
+        const width = Math.max((node.duration_ms || 0) / totalRange * 100, 0.4);
 
-        const typeClass = s.span_type === 'llm_call' ? 'llm'
-          : s.span_type === 'tool_call' ? 'tool'
-          : s.span_type === 'delegate_task' ? 'delegate'
-          : s.span_type === 'session_turn' ? 'session' : 'step';
+        const typeClass = node.span_type === 'llm_call' ? 'llm'
+          : node.span_type === 'tool_call' ? 'tool'
+          : node.span_type === 'delegate_task' ? 'delegate'
+          : node.span_type === 'session_turn' ? 'session' : 'step';
 
-        const icon = s.span_type === 'session_turn' ? '&#9654;'
-          : s.span_type === 'llm_call' ? '&#9679;'
-          : s.span_type === 'delegate_task' ? '&#10031;'
-          : s.span_type === 'tool_call' ? '&#9670;' : '&#9654;';
+        const icon = node.span_type === 'session_turn' ? '&#9654;'
+          : node.span_type === 'llm_call' ? '&#9679;'
+          : node.span_type === 'delegate_task' ? '&#10031;'
+          : node.span_type === 'tool_call' ? '&#9670;' : '&#9654;';
 
-        const isDelegate = s.span_type === 'delegate_task';
-        const isAgentStep = s.span_type === 'agent_step';
+        const isDelegate = node.span_type === 'delegate_task';
 
-        const llmLabel = s.llm_role === 'sub' ? '子 LLM' : '主 LLM';
-        const name = s.span_type === 'llm_call' ? (llmLabel + (s.model ? ' · ' + s.model : ''))
-          : s.span_type === 'tool_call' ? (s.tool_name || 'tool')
-          : s.span_type === 'delegate_task' ? ('子Agent · ' + (s.tool_name || ''))
-          : s.span_type === 'session_turn' ? '会话'
-          : s.span_type === 'agent_step' ? (s.model || 'agent_step') : s.span_type;
+        const llmLabel = node.llm_role === 'sub' ? '子 LLM' : '主 LLM';
+        const name = node.span_type === 'llm_call' ? (llmLabel + (node.model ? ' · ' + node.model : ''))
+          : node.span_type === 'tool_call' ? (node.tool_name || 'tool')
+          : node.span_type === 'delegate_task' ? ('子Agent · ' + (node.tool_name || ''))
+          : node.span_type === 'session_turn' ? '会话'
+          : node.span_type === 'agent_step' ? (node.model || 'agent_step') : node.span_type;
 
-        const startTime = s.started_at ? new Date(s.started_at).toLocaleTimeString() : '';
-        const dur = formatDuration(s.duration_ms || 0);
+        const startTime = node.started_at ? new Date(node.started_at).toLocaleTimeString() : '';
+        const dur = formatDuration(node.duration_ms || 0);
 
         const rowClass = isDelegate ? 'trace-waterfall-row delegate-container' : 'trace-waterfall-row';
-        const subLLMClass = (s.span_type === 'llm_call' && s.llm_role === 'sub') ? ' sub-llm' : '';
+        const subLLMClass = (node.span_type === 'llm_call' && node.llm_role === 'sub') ? ' sub-llm' : '';
         const barClass = (isDelegate ? 'trace-waterfall-bar delegate ' + typeClass : 'trace-waterfall-bar ' + typeClass) + subLLMClass;
 
-        return `
+        const rowHtml = `
         <div class="${rowClass}">
           <div class="trace-waterfall-label" style="padding-left:${8 + depth * 14}px;">
+            ${canCollapse ? `<span class="tw-toggle" onclick="event.stopPropagation();toggleWFChildren('${spanId}')">−</span>` : `<span class="tw-toggle" style="visibility:hidden;">−</span>`}
             <span class="wf-icon">${icon}</span>
             <span class="wf-name" title="${name}">${name}</span>
           </div>
@@ -2302,16 +2303,24 @@ async function showTraceDetail(traceId) {
                 <div style="font-weight:600;margin-bottom:3px;color:#fff;">${name}</div>
                 <div>开始: ${startTime}</div>
                 <div>耗时: ${dur}</div>
-                ${s.input_tokens || s.output_tokens ? `<div>Token: ${s.input_tokens || 0} 入 + ${s.output_tokens || 0} 出</div>` : ''}
-                ${s.status === 'error' ? '<div style="color:#f87171;">状态: 错误</div>' : ''}
+                ${node.input_tokens || node.output_tokens ? `<div>Token: ${node.input_tokens || 0} 入 + ${node.output_tokens || 0} 出</div>` : ''}
+                ${node.status === 'error' ? '<div style="color:#f87171;">状态: 错误</div>' : ''}
               </div>
             </div>
           </div>
           <span class="trace-waterfall-dur">${dur}</span>
         </div>`;
-      }).filter(Boolean).join('');
 
-      // 9. Inline legend
+        if (hasChildren) {
+          return rowHtml + `<div class="tw-children" id="wf-children-${spanId}">` +
+            children.map(c => renderWFNode(c, depth + 1)).join('') + `</div>`;
+        }
+        return rowHtml;
+      }
+
+      const rows = renderWFNode(root, 0);
+
+      // 8. Inline legend
       const legend = `
         <div class="trace-waterfall-legend">
           <span><span class="trace-waterfall-legend-dot" style="background:#8b5cf6;"></span>会话</span>
@@ -2326,7 +2335,7 @@ async function showTraceDetail(traceId) {
         <div class="trace-waterfall" style="--wf-label-w:${labelWidth}px;">
           <div class="trace-waterfall-header">
             <span class="trace-waterfall-title">时间线 (Waterfall)</span>
-            <span class="trace-waterfall-hint">悬停色块查看详情</span>
+            <span class="trace-waterfall-hint">悬停色块查看详情 · 点击 −/+ 折叠子节点</span>
           </div>
           <div class="trace-waterfall-ruler" style="--wf-label-w:${labelWidth}px;">${tickHtml}</div>
           <div class="trace-waterfall-rows">${rows}</div>
@@ -2335,10 +2344,30 @@ async function showTraceDetail(traceId) {
       `;
     }
 
+    // ── Collapse/expand toggles ──
+    function toggleTreeChildren(spanId) {
+      const container = document.getElementById(`tree-children-${spanId}`);
+      if (!container) return;
+      const hidden = container.style.display === 'none';
+      container.style.display = hidden ? '' : 'none';
+      const icon = document.querySelector(`[data-span-id="${spanId}"] .trace-collapse-icon`);
+      if (icon) icon.textContent = hidden ? '−' : '+';
+    }
+    function toggleWFChildren(nodeId) {
+      const container = document.getElementById(`wf-children-${nodeId}`);
+      if (!container) return;
+      const hidden = container.style.display === 'none';
+      container.style.display = hidden ? '' : 'none';
+      const row = container.previousElementSibling;
+      if (row) {
+        const icon = row.querySelector('.tw-toggle');
+        if (icon) icon.textContent = hidden ? '−' : '+';
+      }
+    }
+
     // Enhanced span tree with I/O
     function renderEnhancedTree(node, depth) {
       if (!node) return '';
-      const isDelegate = node.span_type === 'delegate_task';
       const llmRoleLabel = node.llm_role === 'sub' ? '子 LLM' : '主 LLM';
       const typeLabel = node.span_type === 'session_turn' ? '会话'
         : node.span_type === 'llm_call' ? llmRoleLabel
@@ -2362,6 +2391,8 @@ async function showTraceDetail(traceId) {
       const spanId = node.span_id || 's' + Math.random().toString(36).slice(2, 8);
       const errorClass = hasError ? 'has-error' : '';
       const children = node.children || [];
+      const hasChildren = children.length > 0;
+      const canCollapse = hasChildren && node.span_type !== 'session_turn';
       const rowTypeClass = node.span_type === 'session_turn' ? 'session'
         : node.span_type === 'llm_call' ? 'llm'
         : node.span_type === 'tool_call' ? 'tool'
@@ -2369,8 +2400,10 @@ async function showTraceDetail(traceId) {
         : 'step';
 
       const subLLMAttr = (node.span_type === 'llm_call' && node.llm_role === 'sub') ? ' data-role="sub"' : '';
+      const onClick = canCollapse ? ` onclick="toggleTreeChildren('${spanId}')"` : '';
       let html = `
-        <div class="trace-span-row ${rowTypeClass}${node.llm_role === 'sub' ? ' sub-llm' : ''} ${errorClass}"${subLLMAttr} style="margin-left:${depth * 20}px;">
+        <div class="trace-span-row ${rowTypeClass}${node.llm_role === 'sub' ? ' sub-llm' : ''} ${errorClass}"${subLLMAttr} data-span-id="${spanId}"${onClick}>
+          ${canCollapse ? `<span class="trace-collapse-icon" onclick="event.stopPropagation();toggleTreeChildren('${spanId}')">−</span>` : `<span class="trace-collapse-icon" style="visibility:hidden;">−</span>`}
           <span class="trace-span-icon">${typeIcon}</span>
           <span class="trace-span-label">${typeLabel}${nameInfo ? ': ' + nameInfo : ''}</span>
           ${tokenInfo ? `<span style="font-size:10px;color:#888;white-space:nowrap;">${tokenInfo}</span>` : ''}
@@ -2395,16 +2428,8 @@ async function showTraceDetail(traceId) {
             <div class="trace-error-stack">${node.error_message}</div>
           </div>
         ` : ''}
+        ${hasChildren ? `<div class="trace-children" id="tree-children-${spanId}">${children.map(c => renderEnhancedTree(c, depth + 1)).join('')}</div>` : ''}
       `;
-
-      // 子 Agent 的子节点用包裹容器突出显示
-      if (isDelegate && children.length > 0) {
-        html += '<div class="trace-delegate-children">';
-        children.forEach(c => { html += renderEnhancedTree(c, depth + 1); });
-        html += '</div>';
-      } else {
-        children.forEach(c => { html += renderEnhancedTree(c, depth + 1); });
-      }
       return html;
     }
 
