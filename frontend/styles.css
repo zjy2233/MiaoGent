@@ -1192,7 +1192,13 @@ body.panel-dragging #panel-mode {
 }
 .tool-card-body.hidden { max-height: 0; padding: 0 12px; }
 .tool-card-section {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
   margin-bottom: 8px;
+}
+.tool-card-section .trace-copy-btn {
+  margin-left: auto;
 }
 .tool-card-section:last-child { margin-bottom: 0; }
 .tool-card-section.error pre { color: rgba(248, 113, 113, 0.85); }
@@ -1201,10 +1207,10 @@ body.panel-dragging #panel-mode {
   color: rgba(255,255,255,0.35);
   text-transform: uppercase;
   letter-spacing: 0.3px;
-  margin-bottom: 4px;
   display: block;
 }
 .tool-card-section pre {
+  width: 100%;
   font-size: 11px;
   font-family: Menlo, Monaco, Consolas, monospace;
   color: rgba(255,255,255,0.55);
@@ -2548,6 +2554,7 @@ body.panel-dragging #panel-mode {
 .trace-error-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
   padding: 8px 12px;
   background: #2a0f0f;
