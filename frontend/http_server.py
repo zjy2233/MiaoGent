@@ -50,7 +50,7 @@ async def init_agent(app: web.Application) -> None:
         import aiosqlite
         from src.core.config import Settings
         from src.core.llm import build_llm
-        from src.agent.builder import build_supervisor_agent
+        from src.agent.builder import build_agent
         from src.agent.memory import MemoryManager
         from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
@@ -59,7 +59,7 @@ async def init_agent(app: web.Application) -> None:
         conn = await aiosqlite.connect(settings.db_path)
         checkpointer = AsyncSqliteSaver(conn)
         await checkpointer.setup()
-        bundle = build_supervisor_agent(llm, checkpointer=checkpointer)
+        bundle = build_agent(llm, checkpointer=checkpointer)
         from src.tracing.store import TraceStore
         from src.tracing.api import TracingAPI
 

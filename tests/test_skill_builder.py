@@ -24,15 +24,6 @@ class TestBuilderSkillIntegration:
         assert "session_id" in sig.parameters
         assert "skill_registry" in sig.parameters
 
-    def test_build_supervisor_agent_signature(self) -> None:
-        """build_supervisor_agent 签名接受 session_id 和 skill_registry。"""
-        import inspect
-        from src.agent.builder import build_supervisor_agent
-
-        sig = inspect.signature(build_supervisor_agent)
-        assert "session_id" in sig.parameters
-        assert "skill_registry" in sig.parameters
-
     @patch("src.agent.builder.SkillRegistry")
     @patch("src.agent.builder.SkillContextMiddleware")
     @patch("src.agent.builder.build_delegate_task")

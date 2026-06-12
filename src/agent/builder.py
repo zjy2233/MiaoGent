@@ -12,9 +12,9 @@ LangChain 1.x 推荐用 :func:`langchain.agents.create_agent` 构建 agent，
 
 from __future__ import annotations
 
-from collections import namedtuple
+from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Required
+from typing import Annotated, Any
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware
@@ -108,19 +108,16 @@ def _build_tool_guide(tools: list) -> str:
     return "\n".join(lines)
 
 
-# Return type for build_agent
-AgentBundle = namedtuple("AgentBundle", [
-    "agent", "profile_middleware", "memory_middleware", "memory_store",
-    "skill_middleware", "skill_registry", "tools",
-])
-AgentBundle.__new__.__defaults__ = (None, None, None)  # skill_middleware, skill_registry, tools
-
-# Return type for build_supervisor_agent
-SupervisorBundle = namedtuple("SupervisorBundle", [
-    "agent", "profile_middleware", "memory_middleware", "memory_store",
-    "skill_middleware", "skill_registry", "tools",
-])
-SupervisorBundle.__new__.__defaults__ = (None, None, None)
+@dataclass
+class AgentBundle:
+    """Return type for build_agent()."""
+    agent: Any
+    profile_middleware: Any
+    memory_middleware: Any
+    memory_store: Any
+    skill_middleware: Any = None
+    skill_registry: Any = None
+    tools: Any = None
 
 
 def _get_soul_manager() -> "SoulManager":
@@ -134,7 +131,7 @@ def _get_profile_manager() -> "ProfileManager":
 class AgentState(TypedDict):
     """扩展默认 AgentState：增加 ``summary`` 字段记录历史摘要。"""
 
-    messages: Required[Annotated[list, add_messages]]
+    messages: Annotated[list, add_messages]
     summary: NotRequired[str]  # 历史摘要；空字符串/缺省 = 还没有压缩过
 
 
@@ -357,8 +354,6 @@ def build_agent(
 
     delegate_tool = build_delegate_task(
         llm,
-        session_id=session_id,
-        skill_registry=resolved_registry,
     )
 
     # ── 工具列表 ──
@@ -421,52 +416,3 @@ def build_agent(
         tools=tools,
     )
 
-
-def build_supervisor_agent(
-    llm: BaseChatModel,
-    *,
-    checkpointer: MemorySaver | None = None,
-    profile: dict | None = None,
-    memory_store: MemoryStore | None = None,
-    session_id: str | None = None,
-    skill_registry: Any | None = None,
-) -> SupervisorBundle:
-    """构造一个带 sub-agent 委派能力的 agent。
-
-    主 agent 拥有全部工具（包括 ``delegate_task``），遇到复杂任务时
-    自主决定调用 ``delegate_task`` 工具创建隔离 sub-agent 执行子任务。
-
-    Sub-agent 只拥有 ``REGULAR_TOOLS``（不含 ``delegate_task``），
-    从根本上防止无限递归。
-
-    Args:
-        llm: LLM 实例。
-        checkpointer: 持久化 checkpointer。
-        profile: 用户画像字典，None 则自动从磁盘加载。
-        memory_store: 外部 MemoryStore 实例，None 则自动创建。
-        session_id: 会话 ID。提供后 Skill 系统将被激活。
-        skill_registry: SkillRegistry 实例。不传但传入 session_id 时自动创建。
-
-    Returns:
-        SupervisorBundle(...)
-
-    .. versionchanged:: 1.0
-       新增 ``session_id`` 和 ``skill_registry`` 参数。
-    """
-    bundle = build_agent(
-        llm,
-        checkpointer=checkpointer,
-        profile=profile,
-        memory_store=memory_store,
-        session_id=session_id,
-        skill_registry=skill_registry,
-    )
-    return SupervisorBundle(
-        agent=bundle.agent,
-        profile_middleware=bundle.profile_middleware,
-        memory_middleware=bundle.memory_middleware,
-        memory_store=bundle.memory_store,
-        skill_middleware=bundle.skill_middleware,
-        skill_registry=bundle.skill_registry,
-        tools=bundle.tools,
-    )

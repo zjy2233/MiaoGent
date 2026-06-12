@@ -3,10 +3,6 @@
 用法：在 ``builder.py`` 中调用 ``build_delegate_task(llm)`` 生成工具实例，
 加入主 agent 的工具列表。该工具**不**在 ``REGULAR_TOOLS`` 中，
 sub-agent 无法调用此工具，从根本上防止无限递归。
-
-.. versionchanged:: 2.0
-   ``build_delegate_task`` accepts ``skill_registry`` to forward all skill
-   tools to sub-agents (enable/disable removed, all skills pre-registered).
 """
 
 from __future__ import annotations
@@ -27,18 +23,11 @@ _recursion_depth: contextvars.ContextVar[int] = contextvars.ContextVar(
 _MAX_DEPTH: int = 3
 
 
-def build_delegate_task(
-    llm: Any,
-    *,
-    session_id: str | None = None,
-    skill_registry: Any | None = None,
-) -> Any:
-    """构建 ``delegate_task`` 工具，闭包捕获 ``llm`` 实例和 registry 引用。
+def build_delegate_task(llm: Any) -> Any:
+    """构建 ``delegate_task`` 工具，闭包捕获 ``llm`` 实例。
 
     Args:
         llm: LLM 实例，传递给 sub-agent 工厂。
-        session_id: 当前会话 ID（保留参数签名兼容性）。
-        skill_registry: SkillRegistry 实例，用于为 sub-agent 预注册所有 Skill 工具。
 
     Returns:
         装饰了 ``@tool`` 的 async 函数，可直接加入 agent 工具列表。
