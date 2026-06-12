@@ -38,7 +38,7 @@ class TraceCallbackHandler(BaseCallbackHandler):
         self._run_id_to_span_id: dict[uuid.UUID, str] = {}
         self._has_root = False
         self._is_shared = tracer is not None  # 共享模式下不创建 root span
-        self._last_supervisor_llm_id: str | None = None
+        self._supervisor_llm_stack: list[str] = []
 
     def _ensure_tracer(self) -> Tracer:
         if self._tracer is None:
@@ -134,7 +134,7 @@ class TraceCallbackHandler(BaseCallbackHandler):
                 break
         span_id = tracer.start_span("llm_call", model=name or "unknown", llm_role=llm_role)
         if llm_role == "supervisor":
-            self._last_supervisor_llm_id = span_id
+            self._supervisor_llm_stack.append(span_id)
         self._run_id_to_span_id[run_id] = span_id
         if not self._trace_id:
             self._trace_id = tracer._spans[span_id].trace_id
@@ -149,6 +149,11 @@ class TraceCallbackHandler(BaseCallbackHandler):
         span_id = self._run_id_to_span_id.pop(run_id, None)
         if not span_id:
             return
+        # 栈顶的 supervisor LLM 结束时出栈
+        span = tracer._spans.get(span_id)
+        if span and span.llm_role == "supervisor":
+            if self._supervisor_llm_stack and self._supervisor_llm_stack[-1] == span_id:
+                self._supervisor_llm_stack.pop()
         llm_output = getattr(response, "llm_output", None)
         if isinstance(llm_output, dict):
             tokens = self._extract_tokens(llm_output)
@@ -172,6 +177,10 @@ class TraceCallbackHandler(BaseCallbackHandler):
             return
         span_id = self._run_id_to_span_id.pop(run_id, None)
         if span_id:
+            span = tracer._spans.get(span_id)
+            if span and span.llm_role == "supervisor":
+                if self._supervisor_llm_stack and self._supervisor_llm_stack[-1] == span_id:
+                    self._supervisor_llm_stack.pop()
             tracer.end_span(span_id, status="error", error_message=str(error))
             span = tracer._spans.get(span_id)
             if span:
@@ -195,8 +204,8 @@ class TraceCallbackHandler(BaseCallbackHandler):
             for sid in tracer._span_stack
         )
         parent_override = None
-        if not inside_delegate and self._last_supervisor_llm_id:
-            parent_override = self._last_supervisor_llm_id
+        if not inside_delegate and self._supervisor_llm_stack:
+            parent_override = self._supervisor_llm_stack[-1]
         span_type = "delegate_task" if is_delegate else "tool_call"
         span_id = tracer.start_span(
             span_type, parent_span_id=parent_override,
