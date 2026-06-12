@@ -24,24 +24,24 @@ class DangerLevel(Enum):
 
 
 _SHORTCUT_DENY_PATTERNS: list[re.Pattern[str]] = [
+    # 密钥/凭据泄露
     re.compile(r"/\.ssh/|/\.git/config|~\./\.ssh|\.ssh/\.+|osascript.*-e"),
     re.compile(r"(?:curl|wget).*\|\s*(?:bash|sh)\b", re.IGNORECASE),
     re.compile(r"\|\s*sh\b"),
+    # 磁盘/系统级破坏
     re.compile(r"\bdd\b.*(?:of=|if=).*(?:/dev/|sd[a-z])"),
-    re.compile(r"git\s+push\s+--force", re.IGNORECASE),
-    re.compile(r"git\s+reset\s+--hard", re.IGNORECASE),
-    re.compile(r"docker\s+system\s+prune", re.IGNORECASE),
-    re.compile(r"docker\s+kill\b"),
-    re.compile(r"docker\s+rmi\b"),
-    re.compile(r"kubectl\s+delete", re.IGNORECASE),
-    re.compile(r"kubectl\s+exec\b"),
-    re.compile(r"kubectl\s+apply\s+-f", re.IGNORECASE),
+    # 网络后门
     re.compile(r"\bnc\s+.*-e\b"),
+    # 系统关机/重启
     re.compile(r"\bshutdown\b.*-h\b"),
     re.compile(r"\breboot\b"),
+    # 分区/格式化
     re.compile(r"\bmkfs\b"),
+    # 系统初始化
     re.compile(r"\binit\b"),
+    # Fork 炸弹
     re.compile(r":\(\)\s*\{\s*:\|:\s*&", re.IGNORECASE),
+    # 递归删除根目录
     re.compile(r"^\s*rm\s+-rf\s+/\s*$"),
     re.compile(r"^\s*rm\s+-rf?\s+/\s"),
 ]
@@ -116,18 +116,6 @@ def _shortcut_reason(command: str) -> str:
         return "管道执行 shell"
     if re.search(r"\bdd\b.*(?:of=|if=).*(?:/dev/|sd[a-z])", command):
         return "直接磁盘操作"
-    if re.search(r"git\s+push\s+--force", command):
-        return "强制推送远端"
-    if re.search(r"git\s+reset\s+--hard", command):
-        return "强制重置本地提交历史"
-    if re.search(r"docker\s+system\s+prune", command):
-        return "清理所有 Docker 资源"
-    if re.search(r"docker\s+kill\b", command):
-        return "强制终止容器"
-    if re.search(r"kubectl\s+delete", command):
-        return "删除 K8s 资源"
-    if re.search(r"kubectl\s+exec\b", command):
-        return "在容器执行命令"
     if re.search(r"\bnc\s+.*-e\b", command):
         return "网络远控"
     if re.search(r"shutdown.*-h", command):
