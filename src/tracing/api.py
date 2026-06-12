@@ -51,39 +51,28 @@ class TracingAPI:
 
     @staticmethod
     def _reparent_tools_to_llm(spans: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """基于时间序的兼容层：将 tool_call/delegate_task 重新关联到发起它们的 supervisor LLM。
+        """兼容层：修复旧 trace 中 tool_call 的错误 parent_span_id。
 
-        TraceCallbackHandler 已在 on_tool_start 时通过 _last_supervisor_llm_id
-        正确设置 parent_span_id（新建 span 不再有此问题）。
-        此方法仅作为已有 trace 数据的兼容处理保留。
+        旧 trace 已知问题：
+        1. on_llm_end 早于 on_tool_start 触发，tool 得不到 LLM 作 parent
+        2. 并行工具间 toolA→toolB 错误嵌套
 
-        同时解决并行工具执行时 toolA → toolB 的错误嵌套（当 toolB 在
-        toolA 的 on_tool_end 之前触发 on_tool_start 时发生）。
+        新 trace 已被 handler.py 正确修复，此方法仅保留作为兼容。
         """
         if not spans:
             return spans
 
-        # 找到 session_turn span_id
-        session_id = None
-        for s in spans:
-            if s["span_type"] == "session_turn":
-                session_id = s["span_id"]
-                break
-        if not session_id:
-            return spans
-
-        # 按 started_at 排序
         sorted_spans = sorted(spans, key=lambda s: s["started_at"])
 
-        # 跟踪最近的 supervisor LLM span_id（llm_role != "sub"）
-        last_supervisor_llm_id: str | None = None
-
-        # 用 dict 保存修改后的 spans（引用原数据，原地修改）
         modified: dict[str, dict[str, Any]] = {}
         for s in spans:
-            span_id = s["span_id"]
-            # 创建可变副本（避免影响原始数据）
-            modified[span_id] = {**s}
+            modified[s["span_id"]] = {**s}
+
+        session_id: str | None = next(
+            (s["span_id"] for s in spans if s["span_type"] == "session_turn"),
+            None,
+        )
+        last_supervisor_llm_id: str | None = None
 
         for s in sorted_spans:
             sid = s["span_id"]
@@ -92,13 +81,25 @@ class TracingAPI:
             role = span.get("llm_role", "")
 
             if stype == "llm_call" and role != "sub":
-                # supervisor LLM — 记录为当前活跃 LLM
                 last_supervisor_llm_id = sid
+                continue
 
-            elif stype in ("tool_call", "delegate_task"):
-                # 工具或委派任务 — 如果它的 parent 是 session_turn
-                # 则重新关联到最近的活跃 supervisor LLM
-                if span.get("parent_span_id") == session_id and last_supervisor_llm_id:
+            if stype not in ("tool_call", "delegate_task"):
+                continue
+
+            if not last_supervisor_llm_id:
+                continue
+
+            parent_id = span.get("parent_span_id", "")
+            if not parent_id:
+                continue
+
+            # 父级是 session_turn 或另一个 tool → 重新挂到 supervisor LLM
+            if parent_id == session_id:
+                span["parent_span_id"] = last_supervisor_llm_id
+            else:
+                parent = modified.get(parent_id)
+                if parent and parent["span_type"] == "tool_call":
                     span["parent_span_id"] = last_supervisor_llm_id
 
         return [modified[s["span_id"]] for s in spans]

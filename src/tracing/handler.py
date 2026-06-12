@@ -149,11 +149,6 @@ class TraceCallbackHandler(BaseCallbackHandler):
         span_id = self._run_id_to_span_id.pop(run_id, None)
         if not span_id:
             return
-        # 栈顶的 supervisor LLM 结束时出栈
-        span = tracer._spans.get(span_id)
-        if span and span.llm_role == "supervisor":
-            if self._supervisor_llm_stack and self._supervisor_llm_stack[-1] == span_id:
-                self._supervisor_llm_stack.pop()
         llm_output = getattr(response, "llm_output", None)
         if isinstance(llm_output, dict):
             tokens = self._extract_tokens(llm_output)
@@ -177,10 +172,6 @@ class TraceCallbackHandler(BaseCallbackHandler):
             return
         span_id = self._run_id_to_span_id.pop(run_id, None)
         if span_id:
-            span = tracer._spans.get(span_id)
-            if span and span.llm_role == "supervisor":
-                if self._supervisor_llm_stack and self._supervisor_llm_stack[-1] == span_id:
-                    self._supervisor_llm_stack.pop()
             tracer.end_span(span_id, status="error", error_message=str(error))
             span = tracer._spans.get(span_id)
             if span:
