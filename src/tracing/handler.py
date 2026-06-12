@@ -38,7 +38,7 @@ class TraceCallbackHandler(BaseCallbackHandler):
         self._run_id_to_span_id: dict[uuid.UUID, str] = {}
         self._has_root = False
         self._is_shared = tracer is not None  # 共享模式下不创建 root span
-        self._supervisor_llm_stack: list[str] = []
+        self._supervisor_llm_id: str | None = None  # 最近的 supervisor LLM（ReAct 串行，单值足够）
 
     def _ensure_tracer(self) -> Tracer:
         if self._tracer is None:
@@ -134,7 +134,7 @@ class TraceCallbackHandler(BaseCallbackHandler):
                 break
         span_id = tracer.start_span("llm_call", model=name or "unknown", llm_role=llm_role)
         if llm_role == "supervisor":
-            self._supervisor_llm_stack.append(span_id)
+            self._supervisor_llm_id = span_id  # ReAct 串行，新 LLM 覆盖旧值即可
         self._run_id_to_span_id[run_id] = span_id
         if not self._trace_id:
             self._trace_id = tracer._spans[span_id].trace_id
@@ -189,14 +189,14 @@ class TraceCallbackHandler(BaseCallbackHandler):
         name = (serialized.get("name", "") if isinstance(serialized, dict)
                 else getattr(serialized, "name", ""))
         is_delegate = name == "delegate_task"
-        # 在 supervisor 级别将 tool 挂到发起它的 LLM 下而非栈顶（LLM 已在 on_llm_end 时出栈）
+        # supervisor 级 tool → 挂到发起它的 LLM（不从 tracer 栈取，因 LLM 已在 on_llm_end 出栈）
         inside_delegate = any(
             tracer._spans.get(sid) and tracer._spans[sid].span_type == "delegate_task"
             for sid in tracer._span_stack
         )
         parent_override = None
-        if not inside_delegate and self._supervisor_llm_stack:
-            parent_override = self._supervisor_llm_stack[-1]
+        if not inside_delegate and self._supervisor_llm_id:
+            parent_override = self._supervisor_llm_id
         span_type = "delegate_task" if is_delegate else "tool_call"
         span_id = tracer.start_span(
             span_type, parent_span_id=parent_override,
