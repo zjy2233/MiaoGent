@@ -47,7 +47,7 @@ _SHORTCUT_DENY_PATTERNS: list[re.Pattern[str]] = [
 ]
 
 _SAFE_COMMANDS: frozenset[str] = frozenset({
-    "ls", "dir", "pwd", "whoami", "uname", "id",
+    "ls", "dir", "pwd", "cd", "whoami", "uname", "id",
     "cat", "head", "tail", "less", "more", "grep", "egrep", "fgrep",
     "find", "which", "whereis",
     "echo", "printf", "date", "cal",
