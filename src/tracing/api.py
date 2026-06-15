@@ -57,7 +57,7 @@ class TracingAPI:
         1. on_llm_end 早于 on_tool_start 触发，tool 得不到 LLM 作 parent
         2. 并行工具间 toolA→toolB 错误嵌套
 
-        新 trace 已被 handler.py 正确修复，此方法仅保留作为兼容。
+        新 trace 已被 stream_handler.py 和 handler.py 正确修复，此方法仅保留作为兼容。
         """
         if not spans:
             return spans
@@ -68,7 +68,7 @@ class TracingAPI:
         for s in spans:
             modified[s["span_id"]] = {**s}
 
-        session_id: str | None = next(
+        session_turn_span_id: str | None = next(
             (s["span_id"] for s in spans if s["span_type"] == "session_turn"),
             None,
         )
@@ -90,12 +90,9 @@ class TracingAPI:
             if not last_supervisor_llm_id:
                 continue
 
-            parent_id = span.get("parent_span_id", "")
-            if not parent_id:
-                continue
-
-            # 父级是 session_turn 或另一个 tool → 重新挂到 supervisor LLM
-            if parent_id == session_id:
+            parent_id = span.get("parent_span_id")
+            # parent_span_id 为 None（DB 中 NULL）或为 session_turn / 其他 tool → 重新挂到 supervisor LLM
+            if parent_id is None or parent_id == session_turn_span_id:
                 span["parent_span_id"] = last_supervisor_llm_id
             else:
                 parent = modified.get(parent_id)

@@ -7,6 +7,7 @@ from typing import Any
 
 from langchain_core.callbacks import BaseCallbackHandler
 
+from src.core.serialize import _serialize_llm_input, _serialize_llm_output, _short_repr
 from src.tracing.tracer import Tracer
 from src.tracing.store import TraceStore
 
@@ -132,7 +133,8 @@ class TraceCallbackHandler(BaseCallbackHandler):
             if s and s.span_type == "delegate_task":
                 llm_role = "sub"
                 break
-        span_id = tracer.start_span("llm_call", model=name or "unknown", llm_role=llm_role)
+        span_id = tracer.start_span("llm_call", model=name or "unknown", llm_role=llm_role,
+                                     llm_input=_serialize_llm_input(prompts))
         if llm_role == "supervisor":
             self._supervisor_llm_id = span_id  # ReAct 串行，新 LLM 覆盖旧值即可
         self._run_id_to_span_id[run_id] = span_id
@@ -149,17 +151,18 @@ class TraceCallbackHandler(BaseCallbackHandler):
         span_id = self._run_id_to_span_id.pop(run_id, None)
         if not span_id:
             return
+        span = tracer._spans.get(span_id)
         llm_output = getattr(response, "llm_output", None)
         if isinstance(llm_output, dict):
             tokens = self._extract_tokens(llm_output)
-            span = tracer._spans.get(span_id)
             if span:
                 span.input_tokens = tokens["input"]
                 span.output_tokens = tokens["output"]
                 span.cache_hit_tokens = tokens["cache_hit"]
                 span.cache_miss_tokens = tokens["cache_miss"]
+        if span:
+            span.llm_output = _serialize_llm_output(response)
         tracer.end_span(span_id)
-        span = tracer._spans.get(span_id)
         if span:
             self.store.write_span(span)
 
@@ -220,11 +223,12 @@ class TraceCallbackHandler(BaseCallbackHandler):
         span_id = self._run_id_to_span_id.pop(run_id, None)
         if span_id:
             span = tracer._spans.get(span_id)
-            if span and span.span_type == "delegate_task":
-                from src.tracing.context import clear_trace_context
-                clear_trace_context()
+            if span:
+                span.tool_output = _short_repr(output, 4096)
+                if span.span_type == "delegate_task":
+                    from src.tracing.context import clear_trace_context
+                    clear_trace_context()
             tracer.end_span(span_id)
-            span = tracer._spans.get(span_id)
             if span:
                 if not self._is_shared:
                     self.store.write_span(span)

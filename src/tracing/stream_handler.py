@@ -24,6 +24,7 @@ class TracingStreamHandler:
         self._tracer = tracer
         self._run_id_to_span_id: dict[str, str] = {}
         self._detect_delegate = detect_delegate
+        self._supervisor_llm_id: str | None = None
 
     def current_span_id(self) -> str | None:
         return self._tracer.current_span_id
@@ -72,12 +73,15 @@ class TracingStreamHandler:
 
     def _on_chat_model_start(self, run_id: str, event: dict) -> None:
         name = event.get("name", "") or "chat_model"
+        role = self._detect_llm_role()
         sid = self._tracer.start_span(
             "llm_call",
             model=name,
-            llm_role=self._detect_llm_role(),
+            llm_role=role,
             llm_input=_serialize_llm_input(event["data"]["input"]),
         )
+        if role == "supervisor":
+            self._supervisor_llm_id = sid
         self._run_id_to_span_id[run_id] = sid
 
     def _on_chat_model_end(self, run_id: str, event: dict) -> None:
@@ -125,8 +129,18 @@ class TracingStreamHandler:
         inp = event["data"].get("input", "")
         is_delegate = self._detect_delegate and name == "delegate_task"
         span_type = "delegate_task" if is_delegate else "tool_call"
+        # 工具默认从栈顶取 parent（LLM span 可能已在 on_chat_model_end 出栈），
+        # 对于 supervisor 级工具，显式挂到发起它的 LLM span 下
+        inside_delegate = any(
+            self._tracer._spans.get(sid) and self._tracer._spans[sid].span_type == "delegate_task"
+            for sid in self._tracer._span_stack
+        )
+        parent_override = None
+        if not inside_delegate and not is_delegate and self._supervisor_llm_id:
+            parent_override = self._supervisor_llm_id
         sid = self._tracer.start_span(
-            span_type, tool_name=name, tool_input=_short_repr(inp, 500),
+            span_type, parent_span_id=parent_override,
+            tool_name=name, tool_input=_short_repr(inp, 500),
         )
         self._run_id_to_span_id[run_id] = sid
         if is_delegate:
