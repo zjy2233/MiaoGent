@@ -1146,6 +1146,7 @@ function handleStreamEvent(event, data, aiBubble) {
       const card = _createToolCard(data, id);
       card._toolName = data.name;
       card._toolId = id;
+      card._toolRunId = data.run_id || '';
       _activeToolCards[id] = card;
       container.insertBefore(card, aiBubble);
       scrollChatToBottom();
@@ -1196,6 +1197,28 @@ function handleStreamEvent(event, data, aiBubble) {
         container.insertBefore(errCard, aiBubble);
       }
       scrollChatToBottom();
+      return true;
+    }
+
+    case 'human_decision': {
+      // 在工具卡片 header 上追加独立的决策标签（不影响执行状态）
+      const decisionIds = Object.keys(_activeToolCards);
+      for (const id of decisionIds) {
+        const card = _activeToolCards[id];
+        if (card._toolRunId === data.run_id) {
+          const header = card.querySelector('.tool-card-header');
+          // 防止重复添加
+          if (!header.querySelector('.tool-card-decision')) {
+            const tag = document.createElement('span');
+            tag.className = 'tool-card-decision ' + (data.result === 'approved' ? 'approved' : 'denied');
+            tag.textContent = data.result === 'approved' ? '已批准' : '已拒绝';
+            // 插在 status 和 arrow 之间
+            const arrow = header.querySelector('.tool-card-arrow');
+            header.insertBefore(tag, arrow);
+          }
+          break;
+        }
+      }
       return true;
     }
 
@@ -2311,11 +2334,13 @@ async function showTraceDetail(traceId) {
         const typeClass = node.span_type === 'llm_call' ? 'llm'
           : node.span_type === 'tool_call' ? 'tool'
           : node.span_type === 'delegate_task' ? 'delegate'
+          : node.span_type === 'human_decision' ? 'human'
           : node.span_type === 'session_turn' ? 'session' : 'step';
 
         const icon = node.span_type === 'session_turn' ? '&#9654;'
           : node.span_type === 'llm_call' ? '&#9679;'
           : node.span_type === 'delegate_task' ? '&#10031;'
+          : node.span_type === 'human_decision' ? (node.error_message === 'approved' ? '&#10003;' : '&#10007;')
           : node.span_type === 'tool_call' ? '&#9670;' : '&#9654;';
 
         const isDelegate = node.span_type === 'delegate_task';
@@ -2324,6 +2349,7 @@ async function showTraceDetail(traceId) {
         const name = node.span_type === 'llm_call' ? (llmLabel + (node.model ? ' · ' + node.model : ''))
           : node.span_type === 'tool_call' ? (node.tool_name || 'tool')
           : node.span_type === 'delegate_task' ? ('子Agent · ' + (node.tool_name || ''))
+          : node.span_type === 'human_decision' ? ('决策 · ' + (node.error_message === 'approved' ? '已批准' : '已拒绝'))
           : node.span_type === 'session_turn' ? '会话'
           : node.span_type === 'agent_step' ? (node.model || 'agent_step') : node.span_type;
 
@@ -2374,6 +2400,7 @@ async function showTraceDetail(traceId) {
           <span><span class="trace-waterfall-legend-dot" style="background:#6366f1;"></span>子 LLM</span>
           <span><span class="trace-waterfall-legend-dot" style="background:#f59e0b;"></span>工具</span>
           <span><span class="trace-waterfall-legend-dot" style="background:#ec4899;"></span>子Agent</span>
+          <span><span class="trace-waterfall-legend-dot" style="background:#22c55e;"></span>人机决策</span>
           <span style="margin-left:auto;color:#555;">缩进 = 父子嵌套</span>
         </div>`;
 
@@ -2398,15 +2425,18 @@ async function showTraceDetail(traceId) {
         : node.span_type === 'llm_call' ? llmRoleLabel
         : node.span_type === 'delegate_task' ? '子Agent'
         : node.span_type === 'tool_call' ? '工具'
+        : node.span_type === 'human_decision' ? '人机决策'
         : node.span_type === 'agent_step' ? (node.model || 'agent_step')
         : node.span_type;
       const typeIcon = node.span_type === 'session_turn' ? '&#9654;'
         : node.span_type === 'llm_call' ? (node.llm_role === 'sub' ? '&#9675;' : '&#9679;')
         : node.span_type === 'delegate_task' ? '&#10031;'
+        : node.span_type === 'human_decision' ? (node.error_message === 'approved' ? '&#10003;' : '&#10007;')
         : node.span_type === 'tool_call' ? '&#9670;' : '&#9654;';
       const nameInfo = node.span_type === 'llm_call' ? (node.model || '')
         : node.span_type === 'tool_call' ? node.tool_name || ''
         : node.span_type === 'delegate_task' ? (node.tool_name || '')
+        : node.span_type === 'human_decision' ? (node.error_message === 'approved' ? '已批准' : '已拒绝')
         : node.span_type === 'session_turn' ? '' : (node.model || '');
       const tokenInfo = (node.input_tokens || node.output_tokens)
         ? `${node.input_tokens || 0}+${node.output_tokens || 0} t` : '';
@@ -2422,6 +2452,7 @@ async function showTraceDetail(traceId) {
         : node.span_type === 'llm_call' ? 'llm'
         : node.span_type === 'tool_call' ? 'tool'
         : node.span_type === 'delegate_task' ? 'delegate'
+        : node.span_type === 'human_decision' ? 'human'
         : 'step';
 
       const subLLMAttr = (node.span_type === 'llm_call' && node.llm_role === 'sub') ? ' data-role="sub"' : '';

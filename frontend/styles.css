@@ -1169,6 +1169,24 @@ body.panel-dragging #panel-mode {
 .tool-card-status.loading { color: rgba(162, 155, 254, 0.7); }
 .tool-card-status.done { color: rgba(74, 222, 128, 0.8); }
 .tool-card-status.error { color: rgba(248, 113, 113, 0.9); }
+.tool-card-decision {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  margin-left: 4px;
+}
+.tool-card-decision.approved {
+  color: #22c55e;
+  background: rgba(34, 197, 94, 0.12);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+.tool-card-decision.denied {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.12);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+}
 .tool-card-arrow {
   font-size: 10px;
   color: rgba(255,255,255,0.3);
@@ -2250,6 +2268,7 @@ body.panel-dragging #panel-mode {
 .trace-waterfall-bar.session  { background: #8b5cf6; }
 .trace-waterfall-bar.step     { background: #475569; }  /* 旧 agent_step，降级灰色 */
 .trace-waterfall-bar.delegate { background: #ec4899; }
+.trace-waterfall-bar.human   { background: #22c55e; }
 
 /* Waterfall delegate container row */
 .trace-waterfall-row.delegate-container {
@@ -2421,6 +2440,23 @@ body.panel-dragging #panel-mode {
 .trace-span-row.delegate .trace-span-icon {
   color: #ec4899;
   font-size: 16px;
+}
+
+/* human_decision 人机决策节点 */
+.trace-span-row.human {
+  background: #0a1f14;
+  border-left-color: #22c55e;
+  border-left-width: 2px;
+  font-size: 11px;
+}
+.trace-span-row.human .trace-span-label {
+  color: #4ade80;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.trace-span-row.human .trace-span-icon {
+  color: #22c55e;
 }
 
 /* agent_step 链节点 */
